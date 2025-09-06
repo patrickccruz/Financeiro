@@ -22,6 +22,7 @@ interface TransactionFiltersProps {
 export function TransactionFilters({ filters, onFiltersChange }: TransactionFiltersProps) {
   const [categories, setCategories] = useState<{ id: number; name: string }[]>([]);
   const token = typeof window !== 'undefined' ? localStorage.getItem("token") : null;
+  const [periodFilter, setPeriodFilter] = useState<"custom" | "last_30_days" | "this_month" | "next_30_days" | "all_transactions">("custom");
 
   useEffect(() => {
     const fetchCategories = async () => {
@@ -46,6 +47,53 @@ export function TransactionFilters({ filters, onFiltersChange }: TransactionFilt
     };
     fetchCategories();
   }, [token]);
+
+  // Função auxiliar para calcular o intervalo de datas baseado no período
+  const calculateDateRange = (period: typeof periodFilter) => {
+    const today = new Date();
+    let start: Date | null = null;
+    let end: Date | null = null;
+
+    switch (period) {
+      case "last_30_days":
+        start = new Date(today);
+        start.setDate(today.getDate() - 30);
+        end = today;
+        break;
+      case "this_month":
+        start = new Date(today.getFullYear(), today.getMonth(), 1);
+        end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+        break;
+      case "next_30_days":
+        start = today;
+        end = new Date(today);
+        end.setDate(today.getDate() + 30);
+        break;
+      case "all_transactions":
+        // Sem filtros de data para mostrar tudo
+        break;
+      case "custom":
+        // Manter os filtros de data existentes ou limpá-los se nenhum período for selecionado
+        break;
+    }
+    return { dateFrom: start ? start.toISOString().split('T')[0] : "", dateTo: end ? end.toISOString().split('T')[0] : "" };
+  };
+
+  useEffect(() => {
+    if (periodFilter !== "custom") {
+      const { dateFrom, dateTo } = calculateDateRange(periodFilter);
+      onFiltersChange({ ...filters, dateFrom, dateTo });
+    }
+  }, [periodFilter]); // Apenas reage a mudanças no periodFilter
+
+  // Quando as datas customizadas são alteradas, resetar o periodFilter para 'custom'
+  useEffect(() => {
+    if ((filters.dateFrom !== "" || filters.dateTo !== "") && periodFilter !== "custom") {
+      // Isso pode gerar um loop se não for tratado com cuidado. 
+      // A ideia é que se o usuário altera as datas manualmente, o `periodFilter` deve voltar para `custom`
+      setPeriodFilter("custom");
+    }
+  }, [filters.dateFrom, filters.dateTo]); // Reage a mudanças nas datas de filtro customizadas
 
   // const categories = [
   //   "Alimentação",

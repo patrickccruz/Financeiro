@@ -18,6 +18,7 @@ interface Transaction {
   category_name: string;
   date: string;
   category_id: number | null; // Adicionado category_id
+  is_generated_recurring?: boolean; // Adicionado para identificar transações recorrentes geradas
 }
 
 export default function TransactionsPage() {

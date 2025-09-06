@@ -18,6 +18,9 @@ import { MoreHorizontal } from "lucide-react"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
 import { toast } from "sonner"
 import * as Icons from "lucide-react"; // Importa todos os ícones Lucide
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import React from "react"; // Importa React para usar React.createElement
+
 
 interface Category {
   id: number;
@@ -38,6 +41,47 @@ export function CategorySettings() {
   const [error, setError] = useState<string | null>(null)
 
   const token = typeof window !== 'undefined' ? localStorage.getItem("token") : null
+
+  // Cores predefinidas com conceito financeiro
+  const predefinedColors = [
+    { name: "Verde (Receita)", value: "#10B981" }, // Esmeralda - Receitas, Saldo Positivo
+    { name: "Vermelho (Despesa)", value: "#EF4444" }, // Vermelho - Despesas, Alertas
+    { name: "Azul (Investimento)", value: "#3B82F6" }, // Azul vibrante - Investimentos
+    { name: "Amarelo (Economia)", value: "#F59E0B" }, // Laranja/Amarelo - Poupança, Metas
+    { name: "Roxo (Lazer)", value: "#8B5CF6" }, // Violeta - Lazer, Supérfluos
+    { name: "Ciano (Contas)", value: "#06B6D4" }, // Ciano - Contas a Pagar, Fixas
+    { name: "Rosa (Saúde)", value: "#EC4899" }, // Rosa - Saúde, Bem-estar
+    { name: "Cinza (Outros)", value: "#6B7280" }, // Cinza - Diversos, Neutro
+  ];
+
+  // Ícones Lucide relevantes para finanças
+  const predefinedIcons = [
+    { name: "Tag", label: "Etiqueta" },
+    { name: "Home", label: "Casa" },
+    { name: "Car", label: "Carro" },
+    { name: "Utensils", label: "Utensílios" },
+    { name: "ShoppingBag", label: "Sacola de Compras" },
+    { name: "Briefcase", label: "Pasta" },
+    { name: "Heart", label: "Coração" },
+    { name: "PiggyBank", label: "Cofre" },
+    { name: "CreditCard", label: "Cartão de Crédito" },
+    { name: "Landmark", label: "Marco" },
+    { name: "Wallet", label: "Carteira" },
+    { name: "Receipt", label: "Recibo" },
+    { name: "Gift", label: "Presente" },
+    { name: "Plane", label: "Avião" },
+    { name: "Book", label: "Livro" },
+    { name: "GraduationCap", label: "Capelo" },
+    { name: "Handshake", label: "Aperto de Mãos" },
+    { name: "Wrench", label: "Chave Inglesa" },
+    { name: "Couch", label: "Sofá" },
+    { name: "Bus", label: "Ônibus" },
+    { name: "Coffee", label: "Café" },
+    { name: "Banknote", label: "Nota de Banco" },
+    { name: "Coins", label: "Moedas" },
+    { name: "Scale", label: "Balança" },
+    { name: "ChartLine", label: "Gráfico de Linha" }
+  ];
 
   const fetchCategories = async () => {
     setIsLoading(true)
@@ -222,27 +266,64 @@ export function CategorySettings() {
                 <Label htmlFor="color" className="text-right">
                   Cor
                 </Label>
-                <Input
-                  id="color"
-                  type="color"
+                <Select
                   value={newCategoryColor}
-                  onChange={(e) => setNewCategoryColor(e.target.value)}
-                  className="col-span-3 h-8"
+                  onValueChange={setNewCategoryColor}
                   disabled={isLoading}
-                />
+                >
+                  <SelectTrigger className="col-span-3 h-8">
+                    <SelectValue placeholder="Selecione uma cor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {predefinedColors.map((colorOption) => (
+                      <SelectItem key={colorOption.value} value={colorOption.value}>
+                        <div className="flex items-center gap-2">
+                          <div
+                            className="w-4 h-4 rounded-full"
+                            style={{ backgroundColor: colorOption.value }}
+                          />
+                          {colorOption.name}
+                        </div>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
               <div className="grid grid-cols-4 items-center gap-4">
                 <Label htmlFor="icon" className="text-right">
-                  Ícone (Lucide)
+                  Ícone
                 </Label>
-                <Input
-                  id="icon"
-                  placeholder="Ex: Tag, Home, Car"
+                <Select
                   value={newCategoryIcon}
-                  onChange={(e) => setNewCategoryIcon(e.target.value)}
-                  className="col-span-3"
+                  onValueChange={setNewCategoryIcon}
                   disabled={isLoading}
-                />
+                >
+                  <SelectTrigger className="col-span-3">
+                    <SelectValue placeholder="Selecione um ícone">
+                      {newCategoryIcon ? (
+                        <div className="flex items-center gap-2">
+                          {React.createElement((Icons as any)[newCategoryIcon], { className: "h-5 w-5" })}
+                          {predefinedIcons.find(icon => icon.name === newCategoryIcon)?.label || newCategoryIcon}
+                        </div>
+                      ) : (
+                        "Selecione um ícone"
+                      )}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectContent className="max-h-60 overflow-y-auto">
+                    {predefinedIcons.map((icon) => {
+                      const IconComponent = (Icons as any)[icon.name] || Icons.Tag;
+                      return (
+                        <SelectItem key={icon.name} value={icon.name}>
+                          <div className="flex items-center gap-2">
+                            <IconComponent className="h-5 w-5" />
+                            {icon.label}
+                          </div>
+                        </SelectItem>
+                      );
+                    })}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
             <DialogFooter>
@@ -338,27 +419,64 @@ export function CategorySettings() {
               <Label htmlFor="edit-color" className="text-right">
                 Cor
               </Label>
-              <Input
-                id="edit-color"
-                type="color"
+              <Select
                 value={editCategory?.color || "#CCCCCC"}
-                onChange={(e) => setEditCategory(prev => prev ? { ...prev, color: e.target.value } : null)}
-                className="col-span-3 h-8"
+                onValueChange={(value) => setEditCategory(prev => prev ? { ...prev, color: value } : null)}
                 disabled={isLoading}
-              />
+              >
+                <SelectTrigger className="col-span-3 h-8">
+                  <SelectValue placeholder="Selecione uma cor" />
+                </SelectTrigger>
+                <SelectContent>
+                  {predefinedColors.map((colorOption) => (
+                    <SelectItem key={colorOption.value} value={colorOption.value}>
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-4 h-4 rounded-full"
+                          style={{ backgroundColor: colorOption.value }}
+                        />
+                        {colorOption.name}
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="grid grid-cols-4 items-center gap-4">
               <Label htmlFor="edit-icon" className="text-right">
-                Ícone (Lucide)
+                Ícone
               </Label>
-              <Input
-                id="edit-icon"
-                placeholder="Ex: Tag, Home, Car"
+              <Select
                 value={editCategory?.icon || "Tag"}
-                onChange={(e) => setEditCategory(prev => prev ? { ...prev, icon: e.target.value } : null)}
-                className="col-span-3"
+                onValueChange={(value) => setEditCategory(prev => prev ? { ...prev, icon: value } : null)}
                 disabled={isLoading}
-              />
+              >
+                <SelectTrigger className="col-span-3">
+                  <SelectValue placeholder="Selecione um ícone">
+                    {editCategory?.icon ? (
+                      <div className="flex items-center gap-2">
+                        {React.createElement((Icons as any)[editCategory.icon], { className: "h-5 w-5" })}
+                        {predefinedIcons.find(icon => icon.name === editCategory.icon)?.label || editCategory.icon}
+                      </div>
+                    ) : (
+                      "Selecione um ícone"
+                    )}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectContent className="max-h-60 overflow-y-auto">
+                  {predefinedIcons.map((icon) => {
+                    const IconComponent = (Icons as any)[icon.name] || Icons.Tag;
+                    return (
+                      <SelectItem key={icon.name} value={icon.name}>
+                        <div className="flex items-center gap-2">
+                          <IconComponent className="h-5 w-5" />
+                          {icon.label}
+                        </div>
+                      </SelectItem>
+                    );
+                  })}
+                </SelectContent>
+              </Select>
             </div>
           </div>
           <DialogFooter>

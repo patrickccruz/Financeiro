@@ -8,6 +8,18 @@ import { Label } from "@/components/ui/label"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import { User, Mail, Phone, MapPin } from "lucide-react"
 import { toast } from "sonner"; // Importar toast para notificações
+import { useRouter } from "next/navigation"; // Importar useRouter para redirecionamento
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export function ProfileSettings() {
   const [profile, setProfile] = useState({
@@ -17,6 +29,9 @@ export function ProfileSettings() {
   const [error, setError] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState(""); // Novo estado para senha atual
   const [newPassword, setNewPassword] = useState(""); // Novo estado para nova senha
+  const [showDeleteModal, setShowDeleteModal] = useState(false); // Novo estado para controlar o modal de exclusão
+  const [confirmPassword, setConfirmPassword] = useState(""); // Novo estado para a senha de confirmação
+  const router = useRouter(); // Inicializar o router
 
   const fetchProfile = async () => {
     setIsLoading(true);
@@ -118,6 +133,48 @@ export function ProfileSettings() {
       toast.error((err as Error).message || "Erro ao alterar senha.");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleDeleteAccount = async () => {
+    if (!confirmPassword) {
+      setError("Por favor, digite sua senha de confirmação.");
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+    const token = localStorage.getItem("token");
+    if (!token) {
+      setError("Token de autenticação não encontrado.");
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      const response = await fetch("http://localhost:5000/api/profile/delete", {
+        method: "DELETE",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: confirmPassword }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || "Falha ao excluir dados da conta.");
+      }
+      toast.success("Dados financeiros e categorias apagados com sucesso! Sua conta de usuário foi mantida.");
+      fetchProfile(); // Recarrega o perfil para garantir consistência
+    } catch (err) {
+      console.error("Erro ao excluir conta:", err);
+      setError((err as Error).message || "Erro ao excluir dados da conta.");
+      toast.error((err as Error).message || "Erro ao excluir dados da conta.");
+    } finally {
+      setIsLoading(false);
+      setShowDeleteModal(false); // Fechar o modal após a tentativa (sucesso ou falha)
+      setConfirmPassword(""); // Limpa a senha de confirmação
     }
   };
 
@@ -233,6 +290,44 @@ export function ProfileSettings() {
           <Button onClick={handleChangePassword} disabled={isLoading} className="w-fit">
             {isLoading ? "Alterando..." : "Alterar Senha"}
           </Button>
+        </div>
+
+        <div className="grid gap-4 pt-6">
+          <CardTitle className="text-red-600">Apagar Dados da Conta</CardTitle>
+          <AlertDialog open={showDeleteModal} onOpenChange={setShowDeleteModal}>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" className="w-fit">Apagar Dados</Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Você tem certeza absoluta?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esta ação não pode ser desfeita. Isso excluirá permanentemente seus dados financeiros
+                  e removerá seus dados de nossos servidores.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <div className="grid gap-4">
+                <Label htmlFor="confirm-password">Digite sua senha para confirmar</Label>
+                <Input
+                  id="confirm-password"
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  disabled={isLoading}
+                />
+              </div>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={handleDeleteAccount}
+                  disabled={isLoading || confirmPassword === ""}
+                  className="bg-red-600 hover:bg-red-700"
+                >
+                  {isLoading ? "Apagando..." : "Confirmar Exclusão"}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       </CardContent>
     </Card>

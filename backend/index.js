@@ -4,6 +4,7 @@ const mysql = require('mysql2/promise'); // Importar mysql2/promise
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
+const fs = require('fs'); // Adicionar esta linha
 
 const app = express();
 app.use(express.json());
@@ -31,96 +32,113 @@ pool.getConnection()
   });
 
 // Criar tabelas se não existirem
-(async () => {
+async function createTables() {
   try {
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS users (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        username VARCHAR(255) UNIQUE NOT NULL,
-        password VARCHAR(255) NOT NULL
-      );
-    `);
-    console.log('Tabela de usuários verificada/criada com sucesso');
-  } catch (err) {
-    console.error('Erro ao criar tabela de usuários', err);
-  }
-})();
+    const createTablesSql = fs.readFileSync('./sql/create_tables.sql', 'utf8');
+    const sqlCommands = createTablesSql.split(';').filter(command => command.trim() !== '');
 
-(async () => {
-  try {
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS categories (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(255) UNIQUE NOT NULL,
-        color VARCHAR(7) DEFAULT '#CCCCCC',
-        icon VARCHAR(255) DEFAULT 'Tag'
-      );
-    `);
-    console.log('Tabela de categorias verificada/criada com sucesso');
-
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS transactions (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        description VARCHAR(255) NOT NULL,
-        amount DECIMAL(10, 2) NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        category_id INT,
-        payment_method VARCHAR(50),
-        payment_method_id INT, -- Novo campo para referenciar o método de pagamento específico
-        date DATE NOT NULL DEFAULT (CURRENT_DATE()),
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
-        FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL
-      );
-    `);
-    console.log('Tabela de transações verificada/criada com sucesso');
+    for (const command of sqlCommands) {
+      if (command.trim() !== '') { // Adicionado verificação extra para comandos vazios
+        await pool.execute(command);
+      }
+    }
+    console.log('Todas as tabelas verificadas/criadas com sucesso');
   } catch (err) {
-    console.error('Erro ao criar tabelas de categorias/transações', err);
+    console.error('Erro ao criar tabelas:', err);
   }
-})();
+}
 
-(async () => {
-  try {
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS payment_methods (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        type VARCHAR(50) NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        last_four VARCHAR(4),
-        \`limit\` DECIMAL(10, 2),
-        is_active BOOLEAN NOT NULL DEFAULT TRUE,
-        is_default BOOLEAN NOT NULL DEFAULT FALSE,
-        bank_account_id INT, -- Novo campo para referenciar a conta bancária
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-        FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE SET NULL
-      );
-    `);
-    console.log('Tabela de métodos de pagamento verificada/criada com sucesso');
-  } catch (err) {
-    console.error('Erro ao criar tabela de métodos de pagamento', err);
-  }
-})();
+// Chamar a função para criar tabelas ao iniciar o servidor
+createTables();
 
-(async () => {
-  try {
-    await pool.execute(`
-      CREATE TABLE IF NOT EXISTS bank_accounts (
-        id INT AUTO_INCREMENT PRIMARY KEY,
-        user_id INT NOT NULL,
-        name VARCHAR(255) NOT NULL,
-        initial_balance DECIMAL(10, 2) DEFAULT 0.00,
-        current_balance DECIMAL(10, 2) DEFAULT 0.00,
-        is_default BOOLEAN NOT NULL DEFAULT FALSE,
-        FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-      );
-    `);
-    console.log('Tabela de contas bancárias verificada/criada com sucesso');
-  } catch (err) {
-    console.error('Erro ao criar tabela de contas bancárias', err);
+// Funções auxiliares para calcular recorrências
+function addDays(date, days) {
+  const result = new Date(date);
+  result.setDate(result.getDate() + days);
+  return result;
+}
+
+function addMonths(date, months) {
+  const result = new Date(date);
+  result.setMonth(result.getMonth() + months);
+  return result;
+}
+
+function addYears(date, years) {
+  const result = new Date(date);
+  result.setFullYear(result.getFullYear() + years);
+  return result;
+}
+
+// Função auxiliar para gerar ocorrências futuras de transações recorrentes
+function generateFutureRecurringTransactions(baseTransactions, projectionMonths = 12, filterStartDate = null, filterEndDate = null) {
+  let allTransactions = [...baseTransactions];
+  const today = new Date();
+  const maxFutureDate = addMonths(today, projectionMonths); // Projetar N meses no futuro
+
+  for (const originalTransaction of baseTransactions) {
+    if (originalTransaction.is_recurring) {
+      let currentDate = new Date(originalTransaction.date);
+
+      // Avançar currentDate até a primeira ocorrência futura a partir de hoje
+      // ou, se a transação original for no futuro, usar a data original como ponto de partida
+      if (currentDate < today) {
+        let tempDate = new Date(currentDate);
+        let foundNext = false;
+        while (tempDate <= maxFutureDate && (!originalTransaction.recurrence_end_date || tempDate <= new Date(originalTransaction.recurrence_end_date))) {
+          let nextCandidateDate;
+          switch (originalTransaction.frequency) {
+            case "weekly": nextCandidateDate = addDays(tempDate, 7); break;
+            case "monthly": nextCandidateDate = addMonths(tempDate, 1); break;
+            case "annually": nextCandidateDate = addYears(tempDate, 1); break;
+            case "custom": nextCandidateDate = addMonths(tempDate, 1); break; // Fallback
+            default: nextCandidateDate = addMonths(tempDate, 1); break;
+          }
+          if (nextCandidateDate > today) {
+            currentDate = nextCandidateDate;
+            foundNext = true;
+            break;
+          }
+          tempDate = nextCandidateDate;
+        }
+        if (!foundNext) {
+          continue; // Nenhuma ocorrência futura para esta transação recorrente dentro do período máximo
+        }
+      } else if (currentDate > maxFutureDate) {
+        continue; // A transação original já está além do período de projeção
+      }
+
+      // Gerar ocorrências futuras a partir da currentDate ajustada
+      while (currentDate <= maxFutureDate && (!originalTransaction.recurrence_end_date || currentDate <= new Date(originalTransaction.recurrence_end_date))) {
+        const futureTransaction = { ...originalTransaction };
+        futureTransaction.id = `recurring-${originalTransaction.id}-${currentDate.getTime()}`; // ID único
+        futureTransaction.date = currentDate.toISOString().split('T')[0];
+        futureTransaction.is_generated_recurring = true; // Flag
+        allTransactions.push(futureTransaction);
+
+        let nextDate;
+        switch (originalTransaction.frequency) {
+          case "weekly": nextDate = addDays(currentDate, 7); break;
+          case "monthly": nextDate = addMonths(currentDate, 1); break;
+          case "annually": nextDate = addYears(currentDate, 1); break;
+          case "custom": nextDate = addMonths(currentDate, 1); break; // Fallback
+          default: nextDate = addMonths(currentDate, 1); break;
+        }
+        currentDate = nextDate;
+      }
+    }
   }
-})();
+
+  // Aplicar filtros de data se fornecidos
+  const finalFilteredTransactions = allTransactions.filter(transaction => {
+    const transactionDate = new Date(transaction.date);
+    const isWithinDateRange = (!filterStartDate || transactionDate >= new Date(filterStartDate)) &&
+                              (!filterEndDate || transactionDate <= new Date(filterEndDate));
+    return isWithinDateRange;
+  });
+
+  return finalFilteredTransactions;
+}
 
 // Middleware para autenticação JWT
 function authenticateToken(req, res, next) {
@@ -270,12 +288,22 @@ app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
 // Obter todas as transações para o usuário autenticado
 app.get('/api/transactions', authenticateToken, async (req, res) => {
   const { userId } = req.user;
+  const { startDate, endDate } = req.query;
+
   try {
-    const [rows] = await pool.execute(
-      'SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon, pm.name as payment_method_name, pm.last_four as payment_method_last_four FROM transactions t LEFT JOIN categories c ON t.category_id = c.id LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id WHERE t.user_id = ? ORDER BY t.date DESC',
+    // 1. Obter todas as transações base do usuário (reais e recorrentes originais)
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon, pm.name as payment_method_name, pm.last_four as payment_method_last_four, ba.name as bank_account_name, t.is_recurring, t.frequency, t.recurrence_end_date, t.custom_recurrence_interval FROM transactions t LEFT JOIN categories c ON t.category_id = c.id LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id LEFT JOIN bank_accounts ba ON t.bank_account_id = ba.id WHERE t.user_id = ? ORDER BY t.date DESC',
       [userId]
     );
-    res.json(rows);
+
+    // 2. Gerar ocorrências futuras de transações recorrentes e aplicar filtros de data
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 12, startDate, endDate);
+
+    // 3. Ordenar todas as transações por data
+    allTransactions.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+    res.json(allTransactions);
   } catch (error) {
     console.error('Erro detalhado ao buscar transações:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
@@ -285,13 +313,13 @@ app.get('/api/transactions', authenticateToken, async (req, res) => {
 // Adicionar nova transação
 app.post('/api/transactions', authenticateToken, async (req, res) => {
   const { userId } = req.user;
-  const { description, amount, type, category_id, payment_method, payment_method_id, date } = req.body; // Adicionado payment_method_id
+  const { description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval } = req.body; // Adicionado campos de recorrência
   try {
     const [result] = await pool.execute(
-      'INSERT INTO transactions (user_id, description, amount, type, category_id, payment_method, payment_method_id, date) VALUES (?, ?, ?, ?, ?, ?, ?, ?)', // Adicionado payment_method_id
-      [userId, description, amount, type, category_id, payment_method, payment_method_id, date]
+      'INSERT INTO transactions (user_id, description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', // Adicionado campos de recorrência
+      [userId, description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval]
     );
-    res.status(201).json({ id: result.insertId, user_id: userId, description, amount, type, category_id, payment_method, payment_method_id, date }); // Retorna payment_method_id
+    res.status(201).json({ id: result.insertId, user_id: userId, description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval }); // Retorna todos os campos, incluindo recorrência
   } catch (error) {
     console.error('Erro ao adicionar transação:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
@@ -302,11 +330,11 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
 app.put('/api/transactions/:id', authenticateToken, async (req, res) => {
   const { userId } = req.user;
   const { id } = req.params;
-  const { description, amount, type, category_id, payment_method, payment_method_id, date } = req.body; // Adicionado payment_method_id
+  const { description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval } = req.body; // Adicionado campos de recorrência
   try {
     const [result] = await pool.execute(
-      'UPDATE transactions SET description = ?, amount = ?, type = ?, category_id = ?, payment_method = ?, payment_method_id = ?, date = ? WHERE id = ? AND user_id = ?', // Atualiza payment_method_id
-      [description, amount, type, category_id, payment_method, payment_method_id, date, id, userId]
+      'UPDATE transactions SET description = ?, amount = ?, type = ?, category_id = ?, payment_method = ?, payment_method_id = ?, date = ?, is_recurring = ?, frequency = ?, recurrence_end_date = ?, custom_recurrence_interval = ? WHERE id = ? AND user_id = ?', // Atualiza campos de recorrência
+      [description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval, id, userId]
     );
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Transação não encontrada ou você não tem permissão para editá-la.' });
@@ -342,29 +370,44 @@ app.get('/api/financial-overview', authenticateToken, async (req, res) => {
   const currentYear = new Date().getFullYear();
 
   try {
-    const [totalBalanceResult] = await pool.execute(
-      'SELECT SUM(CASE WHEN type = \'income\' THEN amount ELSE -amount END) as total_balance FROM transactions WHERE user_id = ?',
+    // Obter todas as transações (reais e recorrentes originais)
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.*, c.name as category_name, c.color as category_color, c.icon as category_icon, pm.name as payment_method_name, pm.last_four as payment_method_last_four FROM transactions t LEFT JOIN categories c ON t.category_id = c.id LEFT JOIN payment_methods pm ON t.payment_method_id = pm.id WHERE t.user_id = ?',
       [userId]
     );
 
-    const [monthlyIncomeResult] = await pool.execute(
-      'SELECT SUM(amount) as monthly_income FROM transactions WHERE user_id = ? AND type = \'income\' AND MONTH(date) = ? AND YEAR(date) = ?',
-      [userId, currentMonth, currentYear]
-    );
+    // Gerar ocorrências futuras de transações recorrentes
+    // Para o financial-overview, podemos projetar um período razoável (ex: 3 meses para frente)
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 3); // Projetar 3 meses
 
-    const [monthlyExpensesResult] = await pool.execute(
-      'SELECT SUM(amount) as monthly_expenses FROM transactions WHERE user_id = ? AND type = \'expense\' AND MONTH(date) = ? AND YEAR(date) = ?',
-      [userId, currentMonth, currentYear]
-    );
+    // Filtrar transações para o mês/ano atual para os cálculos mensais
+    const currentMonthTransactions = allTransactions.filter(t => {
+      const transactionDate = new Date(t.date);
+      return transactionDate.getMonth() + 1 === currentMonth && transactionDate.getFullYear() === currentYear;
+    });
 
-    const [creditCardDebtResult] = await pool.execute(
-      'SELECT SUM(amount) as credit_card_debt FROM transactions WHERE user_id = ? AND type = \'expense\' AND payment_method = \'credit\' AND MONTH(date) = ? AND YEAR(date) = ?',
-      [userId, currentMonth, currentYear]
-    );
+    // Calcular totais a partir de allTransactions (para saldo total)
+    const totalBalance = allTransactions.reduce((sum, t) => {
+      const amount = parseFloat(t.amount);
+      return sum + (t.type === 'income' ? amount : -amount);
+    }, 0);
 
-    // Novo: Somar o limite de todos os cartões de crédito do usuário
+    // Calcular para o mês atual a partir de currentMonthTransactions
+    const monthlyIncome = currentMonthTransactions
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+    const monthlyExpenses = currentMonthTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+    const creditCardDebt = currentMonthTransactions
+      .filter(t => t.type === 'expense' && t.payment_method === 'credit')
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+    // Novo: Somar o limite de todos os cartões de crédito do usuário (isso não muda com recorrência)
     const [totalCreditLimitResult] = await pool.execute(
-      'SELECT SUM(`limit`) as total_credit_limit FROM payment_methods WHERE user_id = ? AND type = \'credit\' AND is_active = TRUE',
+      'SELECT SUM(`max_credit_limit`) as total_credit_limit FROM payment_methods WHERE user_id = ? AND type = \'credit\' AND is_active = TRUE',
       [userId]
     );
 
@@ -373,14 +416,10 @@ app.get('/api/financial-overview', authenticateToken, async (req, res) => {
       [userId]
     );
 
-    const totalBalance = parseFloat(totalBalanceResult[0].total_balance || 0);
-    const monthlyIncome = parseFloat(monthlyIncomeResult[0].monthly_income || 0);
-    const monthlyExpenses = parseFloat(monthlyExpensesResult[0].monthly_expenses || 0);
-    const creditCardDebt = parseFloat(creditCardDebtResult[0].credit_card_debt || 0);
     const totalCreditLimit = parseFloat(totalCreditLimitResult[0].total_credit_limit || 0);
     const availableCredit = totalCreditLimit - creditCardDebt;
     const totalInitialBalance = parseFloat(bankAccountsResult[0].total_initial_balance || 0);
-    const totalCurrentBalance = parseFloat(bankAccountsResult[0].total_current_balance || 0);
+    const totalCurrentBalance = parseFloat(bankAccountsResult[0].total_current_balance || 0); // Isso precisaria de uma lógica mais complexa para refletir recorrências futuras
 
     res.json({
       totalBalance,
@@ -433,39 +472,67 @@ app.get('/api/reports/summary', authenticateToken, async (req, res) => {
   const dateToStr = dateTo.toISOString().split('T')[0];
 
   try {
-    // Total de Transações
-    const [totalTransactionsResult] = await pool.execute(
-      'SELECT COUNT(*) as total FROM transactions WHERE user_id = ? AND date BETWEEN ? AND ?',
-      [userId, dateFromStr, dateToStr]
+    // 1. Obter todas as transações base para o período
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.*, c.name as category_name FROM transactions t LEFT JOIN categories c ON t.category_id = c.id WHERE t.user_id = ?',
+      [userId]
     );
+
+    // 2. Gerar ocorrências futuras de transações recorrentes dentro do período do relatório
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 12, dateFromStr, dateToStr);
+
+    // Filtrar as transações para o período específico, garantindo que as reais também sejam consideradas
+    const transactionsForPeriod = allTransactions.filter(t => {
+      const transactionDate = new Date(t.date);
+      return transactionDate >= dateFrom && transactionDate <= dateTo;
+    });
+
+    // Total de Transações
+    const totalTransactions = transactionsForPeriod.length;
 
     // Maior Gasto
-    const [highestExpenseResult] = await pool.execute(
-      'SELECT description, amount, c.name as category_name FROM transactions t LEFT JOIN categories c ON t.category_id = c.id WHERE user_id = ? AND type = \'expense\' AND date BETWEEN ? AND ? ORDER BY amount DESC LIMIT 1',
-      [userId, dateFromStr, dateToStr]
-    );
+    const highestExpense = transactionsForPeriod
+      .filter(t => t.type === 'expense')
+      .sort((a, b) => parseFloat(b.amount) - parseFloat(a.amount))[0] || null;
+    
+    const highestExpenseFormatted = highestExpense ? { amount: parseFloat(highestExpense.amount), description: highestExpense.description, category_name: highestExpense.category_name } : null;
 
-    // Categoria Dominante
-    const [dominantCategoryResult] = await pool.execute(
-      'SELECT c.name as category_name, COUNT(*) as count, SUM(t.amount) as total_amount FROM transactions t LEFT JOIN categories c ON t.category_id = c.id WHERE user_id = ? AND type = \'expense\' AND date BETWEEN ? AND ? GROUP BY c.name ORDER BY total_amount DESC LIMIT 1',
-      [userId, dateFromStr, dateToStr]
-    );
+    // Categoria Dominante (baseado em despesas)
+    const expenseCategories = transactionsForPeriod.filter(t => t.type === 'expense');
+    const categoryTotals = expenseCategories.reduce((acc, t) => {
+        acc[t.category_name] = (acc[t.category_name] || 0) + parseFloat(t.amount);
+        return acc;
+    }, {});
+
+    let dominantCategory = null;
+    let maxAmount = 0;
+    for (const categoryName in categoryTotals) {
+        if (categoryTotals[categoryName] > maxAmount) {
+            maxAmount = categoryTotals[categoryName];
+            dominantCategory = { name: categoryName, total_amount: maxAmount };
+        }
+    }
+    const dominantCategoryFormatted = dominantCategory ? { name: dominantCategory.name, percentage: parseFloat(dominantCategory.total_amount) } : null;
 
     // Método Preferido
-    const [preferredPaymentMethodResult] = await pool.execute(
-      'SELECT payment_method, COUNT(*) as count FROM transactions WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY payment_method ORDER BY count DESC LIMIT 1',
-      [userId, dateFromStr, dateToStr]
-    );
+    const paymentMethodCounts = transactionsForPeriod.reduce((acc, t) => {
+        acc[t.payment_method] = (acc[t.payment_method] || 0) + 1;
+        return acc;
+    }, {});
 
-    const totalTransactions = totalTransactionsResult[0].total || 0;
-    const highestExpense = highestExpenseResult[0] ? { amount: parseFloat(highestExpenseResult[0].amount), description: highestExpenseResult[0].description, category_name: highestExpenseResult[0].category_name } : null;
-    const dominantCategory = dominantCategoryResult[0] ? { name: dominantCategoryResult[0].category_name, percentage: parseFloat(dominantCategoryResult[0].total_amount || 0) } : null; // Percentagem será calculada no frontend
-    const preferredPaymentMethod = preferredPaymentMethodResult[0] ? preferredPaymentMethodResult[0].payment_method : null;
+    let preferredPaymentMethod = null;
+    let maxCount = 0;
+    for (const method in paymentMethodCounts) {
+        if (paymentMethodCounts[method] > maxCount) {
+            maxCount = paymentMethodCounts[method];
+            preferredPaymentMethod = method;
+        }
+    }
 
     res.json({
       totalTransactions,
-      highestExpense,
-      dominantCategory,
+      highestExpense: highestExpenseFormatted,
+      dominantCategory: dominantCategoryFormatted,
       preferredPaymentMethod,
     });
   } catch (error) {
@@ -507,12 +574,31 @@ app.get('/api/reports/expenses-by-category', authenticateToken, async (req, res)
   const dateToStr = dateTo.toISOString().split('T')[0];
 
   try {
-    const [rows] = await pool.execute(
-      'SELECT c.name as category, c.color as category_color, SUM(t.amount) as total_amount FROM transactions t LEFT JOIN categories c ON t.category_id = c.id WHERE t.user_id = ? AND t.type = \'expense\' AND t.date BETWEEN ? AND ? GROUP BY c.name, c.color ORDER BY total_amount DESC',
-      [userId, dateFromStr, dateToStr]
+    // 1. Obter todas as transações base para o usuário
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.*, c.name as category_name, c.color as category_color FROM transactions t LEFT JOIN categories c ON t.category_id = c.id WHERE t.user_id = ?',
+      [userId]
     );
 
-    res.json(rows.map((row) => ({ category: row.category || 'Sem Categoria', amount: parseFloat(row.total_amount), color: row.category_color || '#CCCCCC' })));
+    // 2. Gerar ocorrências futuras de transações recorrentes e aplicar filtros de data
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 12, dateFromStr, dateToStr);
+
+    // 3. Filtrar despesas para o período e calcular os totais por categoria
+    const expensesByCategory = allTransactions
+      .filter(t => t.type === 'expense')
+      .reduce((acc, t) => {
+        const categoryName = t.category_name || 'Sem Categoria';
+        if (!acc[categoryName]) {
+          acc[categoryName] = { category: categoryName, total_amount: 0, color: t.category_color || '#CCCCCC' };
+        }
+        acc[categoryName].total_amount += parseFloat(t.amount);
+        return acc;
+      }, {});
+
+    const result = Object.values(expensesByCategory).map(item => ({...item, amount: parseFloat(item.total_amount)}));
+    result.sort((a, b) => b.amount - a.amount);
+
+    res.json(result);
   } catch (error) {
     console.error('Erro ao obter despesas por categoria:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
@@ -542,35 +628,52 @@ app.get('/api/reports/monthly-trends', authenticateToken, async (req, res) => {
       break;
   }
 
-  // Para tendências mensais, precisamos de dados por mês dentro do período
-  const [monthlyDataResult] = await pool.execute(
-    `SELECT
-      DATE_FORMAT(date, '%Y-%m') as month,
-      SUM(CASE WHEN type = 'income' THEN amount ELSE 0 END) as income,
-      SUM(CASE WHEN type = 'expense' THEN amount ELSE 0 END) as expense
-    FROM transactions
-    WHERE user_id = ? AND date BETWEEN ? AND ?
-    GROUP BY month
-    ORDER BY month`,
-    [userId, dateFrom.toISOString().split('T')[0], dateTo.toISOString().split('T')[0]]
-  );
+  const dateFromStr = dateFrom.toISOString().split('T')[0];
+  const dateToStr = dateTo.toISOString().split('T')[0];
 
-  // Preencher meses ausentes para ter uma série contínua no gráfico
-  const trendDataMap = new Map();
-  monthlyDataResult.forEach((row) => {
-    trendDataMap.set(row.month, { income: parseFloat(row.income), expense: parseFloat(row.expense) });
-  });
+  try {
+    // 1. Obter todas as transações base para o usuário
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.* FROM transactions t WHERE t.user_id = ?',
+      [userId]
+    );
 
-  const result = [];
-  let current = new Date(dateFrom.getFullYear(), dateFrom.getMonth(), 1);
-  while (current <= dateTo) {
-    const monthString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, '0')}`;
-    const data = trendDataMap.get(monthString) || { income: 0, expense: 0 };
-    result.push({ month: monthString, income: data.income, expense: data.expense });
-    current.setMonth(current.getMonth() + 1);
+    // 2. Gerar ocorrências futuras de transações recorrentes e aplicar filtros de data
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 12, dateFromStr, dateToStr);
+
+    // 3. Calcular as tendências mensais a partir de allTransactions
+    const monthlyDataMap = allTransactions.reduce((acc, t) => {
+      const transactionDate = new Date(t.date);
+      const monthString = `${transactionDate.getFullYear()}-${(transactionDate.getMonth() + 1).toString().padStart(2, '0')}`;
+
+      if (!acc[monthString]) {
+        acc[monthString] = { income: 0, expense: 0 };
+      }
+
+      const amount = parseFloat(t.amount);
+      if (t.type === 'income') {
+        acc[monthString].income += amount;
+      } else if (t.type === 'expense') {
+        acc[monthString].expense += amount;
+      }
+      return acc;
+    }, {});
+
+    // Preencher meses ausentes para ter uma série contínua no gráfico
+    const result = [];
+    let current = new Date(dateFrom.getFullYear(), dateFrom.getMonth(), 1);
+    while (current <= dateTo) {
+      const monthString = `${current.getFullYear()}-${(current.getMonth() + 1).toString().padStart(2, '0')}`;
+      const data = monthlyDataMap[monthString] || { income: 0, expense: 0 };
+      result.push({ month: monthString, income: data.income, expense: data.expense });
+      current.setMonth(current.getMonth() + 1);
+    }
+
+    res.json(result);
+  } catch (error) {
+    console.error('Erro ao obter tendências mensais:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
   }
-
-  res.json(result);
 });
 
 // Rota para Gráfico de Métodos de Pagamento
@@ -606,12 +709,29 @@ app.get('/api/reports/payment-methods', authenticateToken, async (req, res) => {
   const dateToStr = dateTo.toISOString().split('T')[0];
 
   try {
-    const [rows] = await pool.execute(
-      'SELECT payment_method, COUNT(*) as count FROM transactions WHERE user_id = ? AND date BETWEEN ? AND ? GROUP BY payment_method ORDER BY count DESC',
-      [userId, dateFromStr, dateToStr]
+    // 1. Obter todas as transações base para o usuário
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.* FROM transactions t WHERE t.user_id = ?',
+      [userId]
     );
 
-    res.json(rows.map((row) => ({ method: row.payment_method, count: row.count })));
+    // 2. Gerar ocorrências futuras de transações recorrentes e aplicar filtros de data
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 12, dateFromStr, dateToStr);
+
+    // 3. Contar os métodos de pagamento a partir de allTransactions
+    const paymentMethodCounts = allTransactions.reduce((acc, t) => {
+      acc[t.payment_method] = (acc[t.payment_method] || 0) + 1;
+      return acc;
+    }, {});
+
+    const result = Object.entries(paymentMethodCounts).map(([method, count]) => ({
+      method,
+      count,
+    }));
+
+    result.sort((a, b) => b.count - a.count);
+
+    res.json(result);
   } catch (error) {
     console.error('Erro ao obter dados de métodos de pagamento:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
@@ -651,18 +771,28 @@ app.get('/api/reports/budget-overview', authenticateToken, async (req, res) => {
   const dateToStr = dateTo.toISOString().split('T')[0];
 
   try {
-    const [incomeResult] = await pool.execute(
-      'SELECT SUM(amount) as total_income FROM transactions WHERE user_id = ? AND type = \'income\' AND date BETWEEN ? AND ?',
-      [userId, dateFromStr, dateToStr]
+    // 1. Obter todas as transações base para o usuário
+    const [baseTransactions] = await pool.execute(
+      'SELECT t.* FROM transactions t WHERE t.user_id = ?',
+      [userId]
     );
 
-    const [expenseResult] = await pool.execute(
-      'SELECT SUM(amount) as total_expense FROM transactions WHERE user_id = ? AND type = \'expense\' AND date BETWEEN ? AND ?',
-      [userId, dateFromStr, dateToStr]
-    );
+    // 2. Gerar ocorrências futuras de transações recorrentes e aplicar filtros de data
+    const allTransactions = generateFutureRecurringTransactions(baseTransactions, 12, dateFromStr, dateToStr);
 
-    const totalIncome = parseFloat(incomeResult[0].total_income || 0);
-    const totalExpense = parseFloat(expenseResult[0].total_expense || 0);
+    // 3. Filtrar transações para o período e calcular os totais
+    const transactionsForPeriod = allTransactions.filter(t => {
+      const transactionDate = new Date(t.date);
+      return transactionDate >= dateFrom && transactionDate <= dateTo;
+    });
+
+    const totalIncome = transactionsForPeriod
+      .filter(t => t.type === 'income')
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
+
+    const totalExpense = transactionsForPeriod
+      .filter(t => t.type === 'expense')
+      .reduce((sum, t) => sum + parseFloat(t.amount), 0);
 
     // Placeholder para Saldo Inicial e Orçamento Definido
     const initialBalance = 1000.00; // Valor fixo para simulação
@@ -687,7 +817,7 @@ app.get('/api/payment-methods', authenticateToken, async (req, res) => {
   const { userId } = req.user;
   try {
     const [rows] = await pool.execute(
-      'SELECT id, type, name, last_four, `limit`, is_active, is_default, bank_account_id FROM payment_methods WHERE user_id = ? ORDER BY is_default DESC, name',
+      'SELECT id, type, name, last_four, `max_credit_limit`, is_active, is_default, bank_account_id FROM payment_methods WHERE user_id = ? ORDER BY is_default DESC, name',
       [userId]
     );
     res.json(rows);
@@ -712,7 +842,7 @@ app.post('/api/payment-methods', authenticateToken, async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      'INSERT INTO payment_methods (user_id, type, name, last_four, `limit`, is_active, is_default, bank_account_id) VALUES (?, ?, ?, ?, ?, TRUE, ?, ?)', // Adicionado bank_account_id
+      'INSERT INTO payment_methods (user_id, type, name, last_four, `max_credit_limit`, is_active, is_default, bank_account_id) VALUES (?, ?, ?, ?, ?, TRUE, ?, ?)', // Adicionado bank_account_id
       [userId, type, name, last_four, limit, is_default, bank_account_id]
     );
 
@@ -720,7 +850,7 @@ app.post('/api/payment-methods', authenticateToken, async (req, res) => {
 
     // Removida a lógica de criação de transação de receita para saldo inicial de débito
 
-    const [newMethod] = await pool.execute('SELECT id, type, name, last_four, `limit`, is_active, is_default, bank_account_id FROM payment_methods WHERE id = ?', [newPaymentMethodId]);
+    const [newMethod] = await pool.execute('SELECT id, type, name, last_four, `credit_limit`, is_active, is_default, bank_account_id FROM payment_methods WHERE id = ?', [newPaymentMethodId]);
     res.status(201).json(newMethod[0]);
   } catch (error) {
     console.error('Erro ao adicionar método de pagamento:', error);
@@ -746,7 +876,7 @@ app.put('/api/payment-methods/:id', authenticateToken, async (req, res) => {
     }
 
     const [result] = await pool.execute(
-      'UPDATE payment_methods SET type = ?, name = ?, last_four = ?, `limit` = ?, is_active = ?, is_default = ?, bank_account_id = ? WHERE id = ? AND user_id = ?', // Adicionado bank_account_id
+      'UPDATE payment_methods SET type = ?, name = ?, last_four = ?, `max_credit_limit` = ?, is_active = ?, is_default = ?, bank_account_id = ? WHERE id = ? AND user_id = ?', // Adicionado bank_account_id
       [type, name, last_four, limit, is_active, is_default, bank_account_id, id, userId]
     );
 
@@ -756,7 +886,7 @@ app.put('/api/payment-methods/:id', authenticateToken, async (req, res) => {
 
     // Removida a lógica de ajustar o saldo do usuário
 
-    const [updatedMethod] = await pool.execute('SELECT id, type, name, last_four, `limit`, is_active, is_default, bank_account_id FROM payment_methods WHERE id = ?', [id]);
+    const [updatedMethod] = await pool.execute('SELECT id, type, name, last_four, `credit_limit`, is_active, is_default, bank_account_id FROM payment_methods WHERE id = ?', [id]);
     res.json(updatedMethod[0]);
   } catch (error) {
     console.error('Erro ao atualizar método de pagamento:', error);
@@ -814,8 +944,8 @@ app.post('/api/bank-accounts', authenticateToken, async (req, res) => {
     // Se houver saldo inicial, criar uma transação de receita
     if (initial_balance && parseFloat(initial_balance) > 0) {
       await pool.execute(
-        'INSERT INTO transactions (user_id, description, amount, type, payment_method, payment_method_id, category_id, date) VALUES (?, ?, ?, ?, ?, NULL, ?, ?)', // payment_method_id deve ser NULL
-        [userId, 'Saldo inicial da conta bancária', parseFloat(initial_balance), 'income', 'bank_account', null, new Date()]
+        'INSERT INTO transactions (user_id, description, amount, type, payment_method, payment_method_id, category_id, bank_account_id, date) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)', // Ajustado category_id para NULL
+        [userId, `Saldo inicial da conta ${name}`, parseFloat(initial_balance), 'income', 'bank_account', newBankAccountId, new Date()] // Ajustado para corresponder à nova query
       );
     }
 
@@ -835,6 +965,106 @@ app.get('/api/bank-accounts', authenticateToken, async (req, res) => {
     res.json(rows);
   } catch (error) {
     console.error('Erro ao buscar contas bancárias:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Atualizar conta bancária
+app.put('/api/bank-accounts/:id', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { id } = req.params;
+  const { name, initial_balance, is_default } = req.body; // Removido current_balance do destructuring
+
+  try {
+    // 1. Obter dados da conta existente
+    const [existingAccounts] = await pool.execute(
+      'SELECT name, initial_balance, current_balance FROM bank_accounts WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
+    if (existingAccounts.length === 0) {
+      return res.status(404).json({ message: 'Conta bancária não encontrada ou você não tem permissão para editá-la.' });
+    }
+
+    const oldAccountName = existingAccounts[0].name;
+    const oldInitialBalance = parseFloat(existingAccounts[0].initial_balance);
+    const newInitialBalance = parseFloat(initial_balance); // Garantir que é um número
+
+    // 2. Lógica is_default
+    if (is_default) {
+      await pool.execute(
+        'UPDATE bank_accounts SET is_default = FALSE WHERE user_id = ? AND is_default = TRUE AND id != ?',
+        [userId, id]
+      );
+    }
+
+    // 3. Atualizar initial_balance e transactions de "Saldo Inicial"
+    if (newInitialBalance !== oldInitialBalance) {
+      // Deletar transação de saldo inicial antiga (se existir)
+      await pool.execute(
+        'DELETE FROM transactions WHERE user_id = ? AND bank_account_id = ? AND description = ? AND type = \'income\'',
+        [userId, id, `Saldo inicial da conta ${oldAccountName}`]
+      );
+
+      // Criar nova transação de saldo inicial (se o novo initial_balance for maior que zero)
+      if (newInitialBalance > 0) {
+        await pool.execute(
+          'INSERT INTO transactions (user_id, description, amount, type, payment_method, payment_method_id, category_id, bank_account_id, date) VALUES (?, ?, ?, ?, ?, NULL, NULL, ?, ?)',
+          [userId, `Saldo inicial da conta ${name}`, newInitialBalance, 'income', 'bank_account', id, new Date()]
+        );
+      }
+    }
+
+    // 4. Recalcular current_balance
+    // Somar todas as transações (incluindo o saldo inicial ajustado) para esta conta
+    const [balanceCalcResult] = await pool.execute(
+      'SELECT SUM(CASE WHEN type = \'income\' THEN amount ELSE -amount END) as calculated_balance FROM transactions WHERE user_id = ? AND bank_account_id = ?',
+      [userId, id]
+    );
+    const newCurrentBalance = parseFloat(balanceCalcResult[0].calculated_balance || 0);
+
+    // 5. Executar UPDATE final na tabela bank_accounts
+    const [result] = await pool.execute(
+      'UPDATE bank_accounts SET name = ?, initial_balance = ?, current_balance = ?, is_default = ? WHERE id = ? AND user_id = ?',
+      [name, newInitialBalance, newCurrentBalance, is_default, id, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      // Isso teoricamente não deveria acontecer aqui, pois já verificamos a existência acima
+      return res.status(404).json({ message: 'Conta bancária não encontrada ou você não tem permissão para editá-la.' });
+    }
+
+    // 6. Retornar conta atualizada
+    const [updatedAccount] = await pool.execute('SELECT id, name, initial_balance, current_balance, is_default FROM bank_accounts WHERE id = ?', [id]);
+    res.json(updatedAccount[0]);
+  } catch (error) {
+    console.error('Erro ao atualizar conta bancária:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Deletar conta bancária
+app.delete('/api/bank-accounts/:id', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { id } = req.params;
+
+  try {
+    // Opcional: Você pode querer verificar se existem transações associadas a esta conta
+    // e decidir se deve impedir a exclusão, reatribuir transações ou excluí-las em cascata.
+    // Para simplificar, estamos permitindo a exclusão em cascata (ON DELETE SET NULL) nas transações e métodos de pagamento.
+
+    const [result] = await pool.execute(
+      'DELETE FROM bank_accounts WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Conta bancária não encontrada ou você não tem permissão para deletá-la.' });
+    }
+
+    res.json({ message: 'Conta bancária deletada com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao deletar conta bancária:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
   }
 });
@@ -919,6 +1149,63 @@ app.put('/api/profile/change-password', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Erro ao alterar senha:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Rota para apagar a conta do usuário e todos os dados associados
+app.delete('/api/profile/delete', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { password } = req.body;
+
+  if (!password) {
+    return res.status(400).json({ message: 'A senha é obrigatória para apagar a conta.' });
+  }
+
+  let connection;
+  try {
+    connection = await pool.getConnection();
+    await connection.beginTransaction(); // Iniciar transação
+
+    // 1. Verificar a senha do usuário
+    const [rows] = await connection.execute('SELECT password FROM users WHERE id = ?', [userId]);
+    const user = rows[0];
+
+    if (!user) {
+      await connection.rollback();
+      return res.status(404).json({ message: 'Usuário não encontrado.' });
+    }
+
+    const isPasswordValid = await bcrypt.compare(password, user.password);
+
+    if (!isPasswordValid) {
+      await connection.rollback();
+      return res.status(401).json({ message: 'Senha incorreta.' });
+    }
+
+    // 2. Excluir dados relacionados ao usuário em ordem de dependência
+    // Excluir transações
+    await connection.execute('DELETE FROM transactions WHERE user_id = ?', [userId]);
+    // Excluir métodos de pagamento
+    await connection.execute('DELETE FROM payment_methods WHERE user_id = ?', [userId]);
+    // Excluir contas bancárias
+    await connection.execute('DELETE FROM bank_accounts WHERE user_id = ?', [userId]);
+    // Excluir categorias (se a relação for ON DELETE CASCADE ou se não houver dependência de outras tabelas)
+    // await connection.execute('DELETE FROM categories WHERE user_id = ?', [userId]);
+    // Finalmente, excluir o usuário
+    // await connection.execute('DELETE FROM users WHERE id = ?', [userId]);
+
+    await connection.commit(); // Confirmar transação
+    res.json({ message: 'Dados financeiros e categorias do usuário foram apagados com sucesso. A conta de usuário foi mantida.' });
+  } catch (error) {
+    if (connection) {
+      await connection.rollback(); // Reverter transação em caso de erro
+    }
+    console.error('Erro ao apagar conta do usuário:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao apagar a conta.' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
   }
 });
 

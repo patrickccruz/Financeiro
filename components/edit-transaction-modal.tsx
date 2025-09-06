@@ -10,6 +10,7 @@ import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { CreditCard, Banknote, Smartphone } from "lucide-react"
 import { toast } from "sonner"
+import { Checkbox } from "@/components/ui/checkbox"; // Importar Checkbox
 
 interface Category {
   id: number;
@@ -24,6 +25,10 @@ interface Transaction {
   payment_method: "credit" | "debit" | "cash" | "pix";
   category_id: number | null; // Assumindo que category_id é number ou null
   date: string;
+  is_recurring: boolean; // Novo campo para indicar se a transação é recorrente
+  frequency: "weekly" | "monthly" | "annually" | "custom" | null; // Frequência da recorrência
+  recurrence_end_date: string | null; // Data de término da recorrência
+  custom_recurrence_interval: string | null; // Para recorrência personalizada
 }
 
 interface EditTransactionModalProps {
@@ -41,6 +46,10 @@ export function EditTransactionModal({ isOpen, onClose, transaction, onTransacti
     payment_method: "credit",
     category_id: null,
     date: new Date().toISOString().split("T")[0],
+    is_recurring: false,
+    frequency: null,
+    recurrence_end_date: null,
+    custom_recurrence_interval: null,
   });
   const [categories, setCategories] = useState<Category[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -58,6 +67,10 @@ export function EditTransactionModal({ isOpen, onClose, transaction, onTransacti
         payment_method: transaction.payment_method,
         category_id: transaction.category_id,
         date: formattedDate, // Usa a data formatada
+        is_recurring: transaction.is_recurring || false,
+        frequency: transaction.frequency || "monthly",
+        recurrence_end_date: transaction.recurrence_end_date || "",
+        custom_recurrence_interval: transaction.custom_recurrence_interval || "",
       });
     } else {
       // Resetar o formulário se não houver transação
@@ -68,6 +81,10 @@ export function EditTransactionModal({ isOpen, onClose, transaction, onTransacti
         payment_method: "credit",
         category_id: null,
         date: new Date().toISOString().split("T")[0],
+        is_recurring: false,
+        frequency: null,
+        recurrence_end_date: null,
+        custom_recurrence_interval: null,
       });
     }
 
@@ -103,8 +120,8 @@ export function EditTransactionModal({ isOpen, onClose, transaction, onTransacti
       setFormData(prev => ({ ...prev, [id]: null }));
     } else if (id === "amount") {
       setFormData(prev => ({ ...prev, [id]: String(value) }));
-    } else if (id === "type" || id === "payment_method") {
-        setFormData(prev => ({ ...prev, [id]: value as "income" | "expense" | "credit" | "debit" | "cash" | "pix" }));
+    } else if (id === "type" || id === "payment_method" || id === "frequency") {
+        setFormData(prev => ({ ...prev, [id]: value as "income" | "expense" | "credit" | "debit" | "cash" | "pix" | "weekly" | "monthly" | "annually" | "custom" }));
     } else {
       setFormData(prev => ({ ...prev, [id]: value }));
     }
@@ -141,6 +158,10 @@ export function EditTransactionModal({ isOpen, onClose, transaction, onTransacti
           category_id: formData.category_id,
           payment_method: formData.payment_method,
           date: formData.date,
+          is_recurring: formData.is_recurring,
+          frequency: formData.is_recurring ? formData.frequency : null,
+          recurrence_end_date: formData.is_recurring && formData.recurrence_end_date ? formData.recurrence_end_date : null,
+          custom_recurrence_interval: formData.is_recurring && formData.frequency === "custom" ? formData.custom_recurrence_interval : null,
         }),
       });
 
@@ -291,6 +312,76 @@ export function EditTransactionModal({ isOpen, onClose, transaction, onTransacti
               disabled={isLoading}
             />
           </div>
+
+          <div className="flex items-center space-x-2 pt-2">
+            <Checkbox
+              id="isRecurring"
+              checked={formData.is_recurring}
+              onCheckedChange={(checked) => {
+                setFormData(prev => ({
+                  ...prev,
+                  is_recurring: typeof checked === 'boolean' ? checked : false,
+                  ...(typeof checked === 'boolean' && !checked && { frequency: "monthly", recurrence_end_date: "", custom_recurrence_interval: "" })
+                }));
+              }}
+              disabled={isLoading}
+            />
+            <Label htmlFor="isRecurring">Transação Recorrente</Label>
+          </div>
+
+          {formData.is_recurring && (
+            <div className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <Label htmlFor="frequency">Frequência</Label>
+                <Select
+                  value={formData.frequency || "monthly"} // Default para "monthly" se for null
+                  onValueChange={(value: "weekly" | "monthly" | "annually" | "custom") =>
+                    setFormData(prev => ({
+                      ...prev,
+                      frequency: value,
+                      ...(value !== "custom" && { custom_recurrence_interval: "" })
+                    }))
+                  }
+                  disabled={isLoading}
+                >
+                  <SelectTrigger id="frequency">
+                    <SelectValue placeholder="Selecione a frequência" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="weekly">Semanal</SelectItem>
+                    <SelectItem value="monthly">Mensal</SelectItem>
+                    <SelectItem value="annually">Anual</SelectItem>
+                    <SelectItem value="custom">Personalizado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {formData.frequency === "custom" && (
+                <div className="space-y-2">
+                  <Label htmlFor="customRecurrenceInterval">Intervalo Personalizado</Label>
+                  <Input
+                    id="custom_recurrence_interval"
+                    type="text"
+                    placeholder="Ex: 'a cada 15 dias', 'primeira segunda-feira do mês'"
+                    value={formData.custom_recurrence_interval || ""}
+                    onChange={handleInputChange}
+                    disabled={isLoading}
+                  />
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="recurrenceEndDate">Data de Término da Recorrência (Opcional)</Label>
+                <Input
+                  id="recurrence_end_date"
+                  type="date"
+                  value={formData.recurrence_end_date || ""}
+                  onChange={handleInputChange}
+                  disabled={isLoading}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="flex space-x-2 pt-4">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent" disabled={isLoading}>

@@ -7,9 +7,11 @@ interface Transaction {
   description: string
   amount: string // Alterado para string para corresponder ao DECIMAL do PostgreSQL
   type: "income" | "expense"
-  payment_method: "credit" | "debit" | "cash" | "pix"
+  payment_method: "credit" | "debit" | "cash" | "pix" | "bank_account"
   category_name: string // Alterado para category_name
+  bank_account_name?: string; // Adicionado para exibir o nome da conta bancária
   date: string
+  is_generated_recurring?: boolean; // Adicionado para identificar transações recorrentes geradas
 }
 
 interface RecentTransactionsProps {
@@ -130,6 +132,8 @@ export function RecentTransactions({ transactions }: RecentTransactionsProps) {
         return <Banknote className="h-4 w-4" /> // Adicionado Pix
       case "debit":
         return <CreditCard className="h-4 w-4" /> // Adicionado débito
+      case "bank_account":
+        return <Banknote className="h-4 w-4" /> // Adicionado conta bancária
       default:
         return <CreditCard className="h-4 w-4" />
     }
@@ -145,6 +149,8 @@ export function RecentTransactions({ transactions }: RecentTransactionsProps) {
         return "Dinheiro"
       case "pix":
         return "PIX"
+      case "bank_account":
+        return "Conta Bancária"
       default:
         return method
     }
@@ -177,14 +183,29 @@ export function RecentTransactions({ transactions }: RecentTransactionsProps) {
                     )}
                   </div>
                   <div>
-                    <p className="font-medium">{transaction.description}</p>
+                    <p className="font-medium">
+                      {transaction.description === "Saldo inicial da conta bancária" && transaction.bank_account_name
+                        ? `Saldo inicial da conta ${transaction.bank_account_name}`
+                        : transaction.description}
+                      {transaction.is_generated_recurring && <span className="ml-2 text-xs text-blue-500">(Recorrente Futuro)</span>}
+                    </p>
                     <div className="flex items-center space-x-2 text-sm text-muted-foreground">
-                      <span>{transaction.category_name}</span>
-                      <span>•</span>
-                      <div className="flex items-center space-x-1">
-                        {getPaymentMethodIcon(transaction.payment_method)}
-                        <span>{getPaymentMethodLabel(transaction.payment_method)}</span>
-                      </div>
+                      {transaction.description !== "Saldo inicial da conta bancária" && (
+                        <>
+                          <span>{transaction.category_name}</span>
+                          <span>•</span>
+                          <div className="flex items-center space-x-1">
+                            {getPaymentMethodIcon(transaction.payment_method)}
+                            <span>{getPaymentMethodLabel(transaction.payment_method)}</span>
+                          </div>
+                        </>
+                      )}
+                      {transaction.description === "Saldo inicial da conta bancária" && transaction.bank_account_name && (
+                        <div className="flex items-center space-x-1">
+                          {getPaymentMethodIcon("bank_account")}
+                          <span>{transaction.bank_account_name}</span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 </div>

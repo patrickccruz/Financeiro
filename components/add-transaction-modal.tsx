@@ -11,6 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { CreditCard, Banknote, Smartphone } from "lucide-react"
 import * as Icons from "lucide-react"; // Importa todos os ícones Lucide
 import { toast } from "sonner";
+import { Checkbox } from "@/components/ui/checkbox"; // Importar Checkbox
 
 interface AddTransactionModalProps {
   isOpen: boolean
@@ -39,6 +40,10 @@ export function AddTransactionModal({ isOpen, onClose, defaultType, onTransactio
     payment_method_id: null as number | null, // Novo campo para o ID do método de pagamento específico
     category: "", // Armazenará o ID da categoria
     date: new Date().toISOString().split("T")[0],
+    isRecurring: false, // Novo campo para indicar se a transação é recorrente
+    frequency: "monthly", // Frequência da recorrência (daily, weekly, monthly, annually, custom)
+    recurrenceEndDate: "", // Data de término da recorrência
+    customRecurrenceInterval: "", // Para recorrência personalizada (ex: "a cada 3 dias")
   });
   const [categories, setCategories] = useState<{ id: number; name: string; color: string; icon: string }[]>([]); // Atualiza a interface da categoria
   const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]); // Novo estado para todos os métodos de pagamento
@@ -189,6 +194,10 @@ export function AddTransactionModal({ isOpen, onClose, defaultType, onTransactio
           payment_method: formData.payment_method_type, // Envia o tipo (ex: 'credit', 'pix')
           payment_method_id: formData.payment_method_id, // Envia o ID específico do método de pagamento
           date: formData.date,
+          is_recurring: formData.isRecurring, // Novo campo para recorrência
+          frequency: formData.isRecurring ? formData.frequency : null, // A frequência só é enviada se for recorrente
+          recurrence_end_date: formData.isRecurring && formData.recurrenceEndDate ? formData.recurrenceEndDate : null, // Data de término opcional
+          custom_recurrence_interval: formData.isRecurring && formData.frequency === "custom" ? formData.customRecurrenceInterval : null, // Intervalo personalizado opcional
         }),
       });
 
@@ -417,6 +426,74 @@ export function AddTransactionModal({ isOpen, onClose, defaultType, onTransactio
               required
             />
           </div>
+
+          <div className="flex items-center space-x-2 pt-2">
+            <Checkbox
+              id="isRecurring"
+              checked={formData.isRecurring}
+              onCheckedChange={(checked) => {
+                setFormData(prev => ({
+                  ...prev,
+                  isRecurring: typeof checked === 'boolean' ? checked : false,
+                  // Resetar campos de recorrência se for desativada
+                  ...(typeof checked === 'boolean' && !checked && { frequency: "monthly", recurrenceEndDate: "", customRecurrenceInterval: "" })
+                }));
+              }}
+            />
+            <Label htmlFor="isRecurring">Transação Recorrente</Label>
+          </div>
+
+          {formData.isRecurring && (
+            <div className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <Label htmlFor="frequency">Frequência</Label>
+                <Select
+                  value={formData.frequency}
+                  onValueChange={(value: "weekly" | "monthly" | "annually" | "custom") =>
+                    setFormData(prev => ({
+                      ...prev,
+                      frequency: value,
+                      // Resetar customRecurrenceInterval se a frequência mudar para não-customizada
+                      ...(value !== "custom" && { customRecurrenceInterval: "" })
+                    }))
+                  }
+                >
+                  <SelectTrigger id="frequency">
+                    <SelectValue placeholder="Selecione a frequência" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="weekly">Semanal</SelectItem>
+                    <SelectItem value="monthly">Mensal</SelectItem>
+                    <SelectItem value="annually">Anual</SelectItem>
+                    <SelectItem value="custom">Personalizado</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+
+              {formData.frequency === "custom" && (
+                <div className="space-y-2">
+                  <Label htmlFor="customRecurrenceInterval">Intervalo Personalizado</Label>
+                  <Input
+                    id="customRecurrenceInterval"
+                    type="text"
+                    placeholder="Ex: 'a cada 15 dias', 'primeira segunda-feira do mês'"
+                    value={formData.customRecurrenceInterval}
+                    onChange={(e) => setFormData({ ...formData, customRecurrenceInterval: e.target.value })}
+                  />
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="recurrenceEndDate">Data de Término da Recorrência (Opcional)</Label>
+                <Input
+                  id="recurrenceEndDate"
+                  type="date"
+                  value={formData.recurrenceEndDate}
+                  onChange={(e) => setFormData({ ...formData, recurrenceEndDate: e.target.value })}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="flex space-x-2 pt-4">
             <Button type="button" variant="outline" onClick={onClose} className="flex-1 bg-transparent">

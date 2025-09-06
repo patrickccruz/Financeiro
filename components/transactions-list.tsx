@@ -39,6 +39,7 @@ interface Transaction {
   category_id: number | null; // Adicionado category_id
   category_color: string; // Adicionado
   category_icon: string; // Adicionado
+  is_generated_recurring?: boolean; // Adicionado para identificar transações recorrentes geradas
 }
 
 interface TransactionsListProps {
@@ -285,7 +286,10 @@ export function TransactionsList({ transactions, filters, onTransactionDeleted, 
                       )}
                     </div>
                     <div>
-                      <p className="font-medium">{transaction.description}</p>
+                      <p className="font-medium">
+                        {transaction.description}
+                        {transaction.is_generated_recurring && <span className="ml-2 text-xs text-blue-500">(Recorrente Futuro)</span>}
+                      </p>
                       <div className="flex items-center space-x-2 text-sm text-muted-foreground">
                         {(() => {
                           const IconComponent = (Icons as any)[transaction.category_icon] || Icons.Tag; // Ícone padrão
@@ -323,16 +327,20 @@ export function TransactionsList({ transactions, filters, onTransactionDeleted, 
                         </Button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent align="end">
-                        <DropdownMenuItem onClick={() => {
-                          setTransactionToEdit(transaction);
-                          setEditDialogOpen(true);
-                        }}>
+                        <DropdownMenuItem 
+                          onClick={() => {
+                            setTransactionToEdit(transaction);
+                            setEditDialogOpen(true);
+                          }}
+                          disabled={transaction.is_generated_recurring} // Desabilita edição para transações geradas
+                        >
                           <Edit className="mr-2 h-4 w-4" />
                           Editar
                         </DropdownMenuItem>
                         <DropdownMenuItem
                           className="text-red-600"
                           onClick={() => handleDeleteTransaction(transaction.id)}
+                          disabled={transaction.is_generated_recurring} // Desabilita exclusão para transações geradas
                         >
                           <Trash2 className="mr-2 h-4 w-4" />
                           Excluir

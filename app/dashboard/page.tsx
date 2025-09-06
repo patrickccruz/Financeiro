@@ -6,6 +6,7 @@ import { DashboardLayout } from "@/components/dashboard-layout"
 import { FinancialOverview } from "@/components/financial-overview"
 import { RecentTransactions } from "@/components/recent-transactions"
 import { QuickActions } from "@/components/quick-actions"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface FinancialData {
   totalBalance: number;
@@ -26,6 +27,7 @@ interface Transaction {
   payment_method: "credit" | "debit" | "cash" | "pix";
   category_name: string;
   date: string;
+  is_generated_recurring?: boolean; // Adicionado para identificar transações recorrentes geradas
 }
 
 export default function DashboardPage() {
@@ -35,6 +37,9 @@ export default function DashboardPage() {
   const [recentTransactions, setRecentTransactions] = useState<Transaction[]>([]);
   const [dataError, setDataError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0) // Estado para forçar a atualização
+  const [filterPeriod, setFilterPeriod] = useState<"last_30_days" | "this_month" | "next_30_days" | "all_transactions">("last_30_days");
+  const [startDate, setStartDate] = useState<string | null>(null);
+  const [endDate, setEndDate] = useState<string | null>(null);
   const router = useRouter()
 
   useEffect(() => {
@@ -47,7 +52,50 @@ export default function DashboardPage() {
 
     setIsAuthenticated(true);
 
+    const calculateDateRange = (period: typeof filterPeriod) => {
+      const today = new Date();
+      let start: Date | null = null;
+      let end: Date | null = null;
+
+      switch (period) {
+        case "last_30_days":
+          start = new Date(today);
+          start.setDate(today.getDate() - 30);
+          end = today;
+          break;
+        case "this_month":
+          start = new Date(today.getFullYear(), today.getMonth(), 1);
+          end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+          break;
+        case "next_30_days":
+          start = today;
+          end = new Date(today);
+          end.setDate(today.getDate() + 30);
+          break;
+        case "all_transactions":
+          // Sem filtros de data para mostrar tudo
+          break;
+      }
+      return { startDate: start ? start.toISOString().split('T')[0] : null, endDate: end ? end.toISOString().split('T')[0] : null };
+    };
+
     const fetchDashboardData = async () => {
+      const { startDate: calculatedStartDate, endDate: calculatedEndDate } = calculateDateRange(filterPeriod);
+      setStartDate(calculatedStartDate);
+      setEndDate(calculatedEndDate);
+
+      let transactionsApiUrl = "http://localhost:5000/api/transactions";
+      const queryParams = [];
+      if (calculatedStartDate) {
+        queryParams.push(`startDate=${calculatedStartDate}`);
+      }
+      if (calculatedEndDate) {
+        queryParams.push(`endDate=${calculatedEndDate}`);
+      }
+      if (queryParams.length > 0) {
+        transactionsApiUrl += `?${queryParams.join('&')}`;
+      }
+
       try {
         // Fetch Financial Overview
         const financialResponse = await fetch("http://localhost:5000/api/financial-overview", {
@@ -63,7 +111,7 @@ export default function DashboardPage() {
         console.log({ financialData }); // Adicionado para depuração
 
         // Fetch Recent Transactions
-        const transactionsResponse = await fetch("http://localhost:5000/api/transactions", {
+        const transactionsResponse = await fetch(transactionsApiUrl, {
           headers: {
             Authorization: `Bearer ${token}`,
           },
@@ -83,7 +131,7 @@ export default function DashboardPage() {
     };
 
     fetchDashboardData();
-  }, [router, refreshKey]); // Adicionado refreshKey como dependência
+  }, [router, refreshKey, filterPeriod]); // Adicionado refreshKey e filterPeriod como dependências
 
   const onFinancialDataUpdated = () => { // Renomeado de handleTransactionSaved
     console.log("onFinancialDataUpdated chamado, incrementando refreshKey");
@@ -127,6 +175,21 @@ export default function DashboardPage() {
 
         <FinancialOverview financialData={financialData} />
         <QuickActions onTransactionSaved={onFinancialDataUpdated} /> {/* Usando o novo nome aqui */}
+ 
+        <div className="flex justify-between items-center">
+          <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Transações Recentes</h2>
+          <Select value={filterPeriod} onValueChange={(value: typeof filterPeriod) => setFilterPeriod(value)}>
+            <SelectTrigger className="w-[180px]">
+              <SelectValue placeholder="Filtrar por período" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="last_30_days">Últimos 30 Dias</SelectItem>
+              <SelectItem value="this_month">Este Mês</SelectItem>
+              <SelectItem value="next_30_days">Próximos 30 Dias (Recorrentes)</SelectItem>
+              <SelectItem value="all_transactions">Todas as Transações</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <RecentTransactions transactions={recentTransactions} />
       </div>
     </DashboardLayout>
