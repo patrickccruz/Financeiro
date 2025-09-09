@@ -6,6 +6,7 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Home, CreditCard, TrendingUp, Settings, LogOut, Menu, X } from "lucide-react"
+import { NotificationBell } from "@/components/NotificationBell";
 
 interface DashboardLayoutProps {
   children: React.ReactNode
@@ -97,6 +98,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="flex flex-1 gap-x-4 self-stretch lg:gap-x-6">
             <div className="flex flex-1"></div>
             <div className="flex items-center gap-x-4 lg:gap-x-6">
+              <NotificationBell />
               <span className="text-sm text-gray-700 dark:text-gray-300">
                 {typeof window !== "undefined" && JSON.parse(localStorage.getItem("user") || '{}').username}
               </span>

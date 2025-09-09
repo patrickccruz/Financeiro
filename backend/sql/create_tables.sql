@@ -1,3 +1,5 @@
+CREATE DATABASE IF NOT EXISTS financeiro_db;
+
 CREATE TABLE IF NOT EXISTS users (
   id INT AUTO_INCREMENT PRIMARY KEY,
   username VARCHAR(255) UNIQUE NOT NULL,
@@ -54,4 +56,15 @@ CREATE TABLE IF NOT EXISTS transactions (
   FOREIGN KEY (category_id) REFERENCES categories(id) ON DELETE SET NULL,
   FOREIGN KEY (payment_method_id) REFERENCES payment_methods(id) ON DELETE SET NULL,
   FOREIGN KEY (bank_account_id) REFERENCES bank_accounts(id) ON DELETE SET NULL
+);
+
+CREATE TABLE IF NOT EXISTS notifications (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  type VARCHAR(50) NOT NULL,
+  message TEXT NOT NULL,
+  due_date DATETIME,
+  is_read BOOLEAN DEFAULT FALSE,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

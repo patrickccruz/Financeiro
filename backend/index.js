@@ -10,46 +10,74 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-// Configuração do banco de dados MySQL
-const pool = mysql.createPool({
+const poolConfig = {
   host: process.env.DB_HOST,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
-  database: process.env.DB_NAME,
   port: process.env.DB_PORT,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-});
+};
 
-pool.getConnection()
-  .then(connection => {
-    console.log('Conectado ao MySQL/MariaDB');
-    connection.release();
-  })
-  .catch(err => {
-    console.error('Erro ao conectar ao banco de dados', err.stack);
-  });
+let pool;
 
-// Criar tabelas se não existirem
-async function createTables() {
+async function initializeDatabaseAndTables() {
+  let tempConnection;
   try {
+    // 1. Conectar ao servidor MySQL sem um banco de dados específico para criar o DB se não existir
+    tempConnection = await mysql.createConnection({
+      ...poolConfig,
+      database: null, // Conecta sem especificar um DB
+    });
+
+    console.log(`Verificando/Criando banco de dados: ${process.env.DB_NAME}`);
+    await tempConnection.execute(`CREATE DATABASE IF NOT EXISTS ${process.env.DB_NAME}`);
+    console.log(`Banco de dados ${process.env.DB_NAME} verificado/criado.`);
+
+    await tempConnection.end(); // Fechar a conexão temporária
+
+    // 2. Criar o pool principal com o banco de dados especificado
+    pool = mysql.createPool({
+      ...poolConfig,
+      database: process.env.DB_NAME, // Agora o DB deve existir
+    });
+
+    // Testar a conexão do pool principal
+    await pool.getConnection()
+      .then(connection => {
+        console.log('Conectado ao MySQL/MariaDB com o banco de dados principal.');
+        connection.release();
+      })
+      .catch(err => {
+        console.error('Erro ao conectar ao banco de dados principal:', err.stack);
+        process.exit(1); // Encerrar se não conseguir conectar ao DB principal
+      });
+
+    // 3. Criar tabelas dentro do banco de dados (ignorando a instrução CREATE DATABASE)
     const createTablesSql = fs.readFileSync('./sql/create_tables.sql', 'utf8');
-    const sqlCommands = createTablesSql.split(';').filter(command => command.trim() !== '');
+    // Remove a instrução CREATE DATABASE do script SQL, pois já foi tratada
+    const createTablesOnlySql = createTablesSql.replace(/CREATE DATABASE IF NOT EXISTS financeiro_db;/i, '').trim();
+    const sqlCommands = createTablesOnlySql.split(';').filter(command => command.trim() !== '');
 
     for (const command of sqlCommands) {
-      if (command.trim() !== '') { // Adicionado verificação extra para comandos vazios
+      if (command.trim() !== '') {
         await pool.execute(command);
       }
     }
     console.log('Todas as tabelas verificadas/criadas com sucesso');
+
   } catch (err) {
-    console.error('Erro ao criar tabelas:', err);
+    console.error('Erro durante a inicialização do banco de dados e tabelas:', err);
+    if (tempConnection) {
+      await tempConnection.end();
+    }
+    process.exit(1); // Encerrar o processo em caso de erro crítico
   }
 }
 
-// Chamar a função para criar tabelas ao iniciar o servidor
-createTables();
+// Chamar a função de inicialização ao iniciar o servidor
+initializeDatabaseAndTables();
 
 // Funções auxiliares para calcular recorrências
 function addDays(date, days) {
@@ -1206,6 +1234,94 @@ app.delete('/api/profile/delete', authenticateToken, async (req, res) => {
     if (connection) {
       connection.release();
     }
+  }
+});
+
+// NOVO: Rota para obter notificações do usuário
+app.get('/api/notifications', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  try {
+    const now = new Date();
+    const thirtyDaysFromNow = new Date();
+    thirtyDaysFromNow.setDate(now.getDate() + 30);
+
+    const nowStr = now.toISOString().split('T')[0];
+    const thirtyDaysFromNowStr = thirtyDaysFromNow.toISOString().split('T')[0];
+
+    // 1. Obter despesas futuras (contas a vencer) do módulo de transações
+    const [futureExpenses] = await pool.execute(
+      'SELECT id, description, amount, date, type FROM transactions WHERE user_id = ? AND type = \'expense\' AND date BETWEEN ? AND ?',
+      [userId, nowStr, thirtyDaysFromNowStr]
+    );
+
+    // 2. Gerar ocorrências futuras de despesas recorrentes para o período
+    // Precisamos buscar as transações recorrentes completas para generateFutureRecurringTransactions
+    const [allUserTransactions] = await pool.execute(
+      'SELECT * FROM transactions WHERE user_id = ?',
+      [userId]
+    );
+    const recurringFutureTransactions = generateFutureRecurringTransactions(allUserTransactions, 1, nowStr, thirtyDaysFromNowStr) // Projetar 1 mês para notificaçôes de vencimento
+      .filter(t => t.type === 'expense' && new Date(t.date) >= now && new Date(t.date) <= thirtyDaysFromNow);
+
+    const combinedExpenses = [...futureExpenses, ...recurringFutureTransactions.filter(t => !t.is_generated_recurring || !futureExpenses.some(fe => fe.id === t.id))];
+
+    const notificationsFromExpenses = combinedExpenses.map(exp => ({
+      id: `expense-${exp.id}-${new Date(exp.date).getTime()}`,
+      type: 'conta',
+      message: `Conta: ${exp.description} de R$ ${parseFloat(exp.amount).toFixed(2)} vence em ${new Date(exp.date).toLocaleDateString('pt-BR')}`,
+      dueDate: exp.date,
+      is_read: false, // Por padrão, as despesas futuras são consideradas não lidas até serem marcadas
+    }));
+
+    // 3. Obter notificações existentes na tabela 'notifications' que não foram lidas
+    const [existingUnreadNotifications] = await pool.execute(
+      'SELECT id, type, message, due_date, is_read, created_at FROM notifications WHERE user_id = ? AND is_read = FALSE ORDER BY created_at DESC',
+      [userId]
+    );
+
+    const finalNotifications = [...notificationsFromExpenses, ...existingUnreadNotifications].sort((a, b) => {
+        const dateA = new Date(a.dueDate || a.created_at);
+        const dateB = new Date(b.dueDate || b.created_at);
+        return dateA.getTime() - dateB.getTime(); // Ordenar por data mais próxima primeiro
+    });
+
+    res.json(finalNotifications);
+  } catch (error) {
+    console.error('Erro ao buscar notificações:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao buscar notificações.' });
+  }
+});
+
+// NOVO: Rota para marcar notificações como lidas
+app.post('/api/notifications/mark-as-read', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { notificationIds } = req.body;
+
+  if (!Array.isArray(notificationIds) || notificationIds.length === 0) {
+    return res.status(400).json({ message: 'IDs de notificação são obrigatórios.' });
+  }
+
+  try {
+    // Separar IDs de notificações de despesas (temporárias) dos IDs da tabela 'notifications'
+    const expenseNotificationIds = notificationIds.filter(id => id.startsWith('expense-'));
+    const dbNotificationIds = notificationIds.filter(id => !id.startsWith('expense-'));
+
+    if (dbNotificationIds.length > 0) {
+      const placeholders = dbNotificationIds.map(() => '?').join(', ');
+      await pool.execute(
+        `UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND id IN (${placeholders})`,
+        [userId, ...dbNotificationIds]
+      );
+    }
+    
+    // Para notificações baseadas em despesas, o front-end terá que gerenciar o estado 'lido' temporariamente
+    // Ou você pode persistir essas notificações na tabela 'notifications' quando elas são geradas/visualizadas
+    // Por enquanto, apenas as notificações da tabela 'notifications' são persistidas como lidas.
+
+    res.json({ message: 'Notificações marcadas como lidas com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao marcar notificações como lidas:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao marcar notificações como lidas.' });
   }
 });
 

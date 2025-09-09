@@ -10,6 +10,7 @@ O objetivo principal é fornecer uma plataforma intuitiva para que os usuários 
 - Gerenciar suas transações (receitas e despesas) com detalhes como descrição, valor, tipo, método de pagamento, categoria e data.
 - Consultar relatórios financeiros detalhados, incluindo gastos por categoria, tendências mensais de receitas/despesas e uso de métodos de pagamento.
 - Configurar seus métodos de pagamento e atualizar seu perfil de usuário.
+- **Receber notificações sobre contas a vencer e prazos importantes.**
 
 ## ✨ Tecnologias Utilizadas
 
@@ -52,7 +53,8 @@ Siga os passos abaixo para configurar e executar o projeto.
 3.  **Crie o Banco de Dados:**
     *   No phpMyAdmin, clique em "New" (Novo) no menu lateral esquerdo.
     *   No campo "Database name" (Nome do banco de dados), digite `financeiro_db` e clique em "Create" (Criar).
-    *   As tabelas (`users`, `categories`, `transactions`, `payment_methods`) serão criadas automaticamente pelo backend quando ele for iniciado pela primeira vez.
+    *   As tabelas (`users`, `categories`, `transactions`, `payment_methods`, `bank_accounts`, **`notifications`**) serão criadas automaticamente pelo backend quando ele for iniciado pela primeira vez, assim como o banco de dados `financeiro_db`.
+    *   **Não é mais necessário criar o banco de dados manualmente via phpMyAdmin.** O servidor Express (`index.js`) agora lida com isso.
 
 #### 1.2. Configuração do Projeto Backend
 
@@ -115,6 +117,13 @@ Siga os passos abaixo para configurar e executar o projeto.
 -   Transações recentes.
 -   Botões de ações rápidas para adicionar receitas ou despesas.
 
+### Sistema de Notificações
+-   **Sino de Notificação:** Componente visual no cabeçalho que exibe o número de notificações não lidas.
+-   **Dropdown de Notificações:** Ao clicar no sino, um dropdown é exibido com detalhes sobre: 
+    -   **Contas a Vencer:** Despesas futuras (incluindo recorrências) que vencem nos próximos 30 dias.
+    -   **Notificações Personalizadas:** Alertas e prazos definidos pelo sistema (armazenados no banco de dados).
+-   **Marcar Todas como Lidas:** Funcionalidade para marcar todas as notificações visíveis como lidas, persistindo a mudança no backend.
+
 ### Transações
 -   Lista completa de todas as transações.
 -   Filtragem por descrição, categoria, método de pagamento, tipo (receita/despesa) e período de data.
@@ -154,6 +163,7 @@ Financeiro/
 │   ├── dashboard-layout.tsx
 │   ├── financial-overview.tsx
 │   ├── login-form.tsx
+│   ├── NotificationBell.tsx # Componente do sino de notificação
 │   ├── payment-methods-settings.tsx
 │   ├── profile-settings.tsx
 │   ├── quick-actions.tsx
@@ -166,10 +176,12 @@ Financeiro/
 │   └── package.json      # Dependências do backend
 ├── .env.example          # Exemplo de arquivo .env para o backend
 ├── globals.css           # Estilos globais
-├── next.config.mjs       # Configuração do Next.js
+├── next.config.mjs       # Configuração do Next.js (com rewrites para o backend)
 ├── package.json          # Dependências do frontend
 ├── postcss.config.mjs
 ├── README.md             # Este arquivo
+├── lib/                  # Utilitários e funções de apoio
+│   └── notifications.ts  # Funções para interação com a API de notificações
 ├── tailwind.config.ts
 ├── tsconfig.json
 └── v0.json
@@ -192,6 +204,8 @@ Na pasta `backend/`:
 -   **Edição de Transações:** Adicionar a funcionalidade de editar transações existentes (a API `PUT /api/transactions/:id` já existe no backend).
 -   **Exportação de Dados:** Permitir que os usuários exportem seus dados financeiros.
 -   **Recuperação de Senha:** Implementar um fluxo de recuperação de senha.
+-   **Notificações em Tempo Real:** Integrar WebSockets para notificações push em tempo real.
+-   **Preferências de Notificação:** Permitir que o usuário configure quais tipos de notificações deseja receber e como (ex: email, pop-up).
 -   **Testes:** Adicionar testes unitários e de integração para frontend e backend.
 -   **Melhoria na UI/UX:** Refinar a interface e a experiência do usuário.
 -   **Autenticação Avançada:** Implementar autenticação com provedores externos (Google, GitHub, etc.).
