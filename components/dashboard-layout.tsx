@@ -2,7 +2,7 @@
 
 import type React from "react"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Home, CreditCard, TrendingUp, Settings, LogOut, Menu, X } from "lucide-react"
@@ -14,7 +14,15 @@ interface DashboardLayoutProps {
 
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [username, setUsername] = useState<string | null>(null);
   const router = useRouter()
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const user = JSON.parse(localStorage.getItem("user") || '{}');
+      setUsername(user.username || null);
+    }
+  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem("token")
@@ -25,6 +33,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: Home },
     { name: "Transações", href: "/transactions", icon: CreditCard },
+    { name: "Dívidas", href: "/debts", icon: CreditCard }, // Novo link para a página de Dívidas
     { name: "Relatórios", href: "/reports", icon: TrendingUp },
     { name: "Configurações", href: "/settings", icon: Settings },
   ]
@@ -100,7 +109,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <div className="flex items-center gap-x-4 lg:gap-x-6">
               <NotificationBell />
               <span className="text-sm text-gray-700 dark:text-gray-300">
-                {typeof window !== "undefined" && JSON.parse(localStorage.getItem("user") || '{}').username}
+                {username}
               </span>
             </div>
           </div>

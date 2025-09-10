@@ -98,6 +98,106 @@ function addYears(date, years) {
   return result;
 }
 
+// Função auxiliar para gerar ocorrências futuras de dívidas recorrentes
+function generateFutureDebts(baseDebts, projectionMonths = 12, filterStartDate = null, filterEndDate = null) {
+  let allDebts = [...baseDebts];
+  const today = new Date();
+  today.setHours(0, 0, 0, 0); // Normalizar para o início do dia
+
+  const maxFutureDate = addMonths(today, projectionMonths);
+  maxFutureDate.setHours(23, 59, 59, 999); // Normalizar para o fim do dia
+
+  for (const originalDebt of baseDebts) {
+    if (originalDebt.recurrence_type !== 'none' && originalDebt.status === 'pending') {
+      let currentDate = new Date(originalDebt.due_date);
+      currentDate.setHours(0, 0, 0, 0); // Normalizar para o início do dia
+
+      // Se a dívida original já venceu, pular para a próxima ocorrência futura
+      while (currentDate < today) {
+        let nextCandidateDate;
+        if (originalDebt.recurrence_type === 'monthly') {
+          nextCandidateDate = addMonths(currentDate, 1);
+        } else if (originalDebt.recurrence_type === 'custom') {
+          switch (originalDebt.recurrence_unit) {
+            case 'day': nextCandidateDate = addDays(currentDate, originalDebt.recurrence_interval); break;
+            case 'week': nextCandidateDate = addDays(currentDate, originalDebt.recurrence_interval * 7); break;
+            case 'month': nextCandidateDate = addMonths(currentDate, originalDebt.recurrence_interval); break;
+            case 'year': nextCandidateDate = addYears(currentDate, originalDebt.recurrence_interval); break;
+            default: nextCandidateDate = addMonths(currentDate, 1); break; // Fallback
+          }
+        } else if (originalDebt.recurrence_type === 'installments') {
+          // Dívidas parceladas geram ocorrências futuras se houver parcelas restantes
+          if (originalDebt.paid_installments < originalDebt.installments) {
+            // Para parcelas, cada nova "ocorrência" é um pagamento futuro.
+            // A data de vencimento da próxima parcela é geralmente um mês após a anterior
+            nextCandidateDate = addMonths(currentDate, 1); 
+          } else {
+            break; // Todas as parcelas foram pagas ou projetadas
+          }
+        } else {
+          break; // Não é recorrente ou tipo desconhecido
+        }
+
+        if (nextCandidateDate && nextCandidateDate >= today) {
+          currentDate = nextCandidateDate;
+          break; // Encontrou a primeira ocorrência futura
+        } else if (nextCandidateDate) {
+          currentDate = nextCandidateDate;
+        } else {
+          break;
+        }
+      }
+      
+      // Gerar ocorrências futuras a partir da currentDate ajustada
+      while (currentDate <= maxFutureDate) {
+        if (originalDebt.recurrence_type === 'installments') {
+          // Para parcelas, geramos até o número total de parcelas
+          if (originalDebt.paid_installments + (allDebts.filter(d => d.original_debt_id === originalDebt.id).length) >= originalDebt.installments) {
+            break; // Já geramos todas as parcelas futuras
+          }
+        }
+
+        const futureDebt = { ...originalDebt };
+        futureDebt.id = `debt-recurring-${originalDebt.id}-${currentDate.getTime()}`; // ID único para ocorrência gerada
+        futureDebt.original_debt_id = originalDebt.id; // Referência à dívida original
+        futureDebt.due_date = currentDate.toISOString().split('T')[0];
+        futureDebt.is_generated_recurring = true; // Flag
+        futureDebt.status = 'pending'; // Ocorrência futura é sempre pendente
+        allDebts.push(futureDebt);
+
+        let nextDate;
+        if (originalDebt.recurrence_type === 'monthly') {
+          nextDate = addMonths(currentDate, 1);
+        } else if (originalDebt.recurrence_type === 'custom') {
+          switch (originalDebt.recurrence_unit) {
+            case 'day': nextDate = addDays(currentDate, originalDebt.recurrence_interval); break;
+            case 'week': nextDate = addDays(currentDate, originalDebt.recurrence_interval * 7); break;
+            case 'month': nextDate = addMonths(currentDate, originalDebt.recurrence_interval); break;
+            case 'year': nextDate = addYears(currentDate, originalDebt.recurrence_interval); break;
+            default: nextDate = addMonths(currentDate, 1); break;
+          }
+        } else if (originalDebt.recurrence_type === 'installments') {
+          nextDate = addMonths(currentDate, 1); // Próxima parcela um mês depois
+        } else {
+          break; // Tipo de recorrência desconhecido ou não recorrente
+        }
+        currentDate = nextDate;
+      }
+    }
+  }
+
+  // Aplicar filtros de data se fornecidos
+  const finalFilteredDebts = allDebts.filter(debt => {
+    const debtDate = new Date(debt.due_date);
+    debtDate.setHours(0, 0, 0, 0);
+    const isWithinDateRange = (!filterStartDate || debtDate >= new Date(filterStartDate)) &&
+                              (!filterEndDate || debtDate <= new Date(filterEndDate));
+    return isWithinDateRange;
+  });
+
+  return finalFilteredDebts;
+}
+
 // Função auxiliar para gerar ocorrências futuras de transações recorrentes
 function generateFutureRecurringTransactions(baseTransactions, projectionMonths = 12, filterStartDate = null, filterEndDate = null) {
   let allTransactions = [...baseTransactions];
@@ -1273,13 +1373,30 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
       is_read: false, // Por padrão, as despesas futuras são consideradas não lidas até serem marcadas
     }));
 
-    // 3. Obter notificações existentes na tabela 'notifications' que não foram lidas
+    // NOVO: 4. Obter dívidas futuras (a vencer) do módulo de dívidas
+    const [userDebts] = await pool.execute(
+      'SELECT id, description, amount, due_date, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments FROM debts WHERE user_id = ? AND status = \'pending\'',
+      [userId]
+    );
+
+    const futureDebts = generateFutureDebts(userDebts, 1, nowStr, thirtyDaysFromNowStr) // Projetar 1 mês para notificações de vencimento
+      .filter(d => new Date(d.due_date) >= now && new Date(d.due_date) <= thirtyDaysFromNow);
+
+    const notificationsFromDebts = futureDebts.map(debt => ({
+      id: `debt-${debt.id}-${new Date(debt.due_date).getTime()}`,
+      type: 'divida',
+      message: `Dívida: ${debt.description} de R$ ${parseFloat(debt.amount).toFixed(2)} vence em ${new Date(debt.due_date).toLocaleDateString('pt-BR')}`,
+      dueDate: debt.due_date,
+      is_read: false,
+    }));
+
+    // 5. Obter notificações existentes na tabela 'notifications' que não foram lidas
     const [existingUnreadNotifications] = await pool.execute(
       'SELECT id, type, message, due_date, is_read, created_at FROM notifications WHERE user_id = ? AND is_read = FALSE ORDER BY created_at DESC',
       [userId]
     );
 
-    const finalNotifications = [...notificationsFromExpenses, ...existingUnreadNotifications].sort((a, b) => {
+    const finalNotifications = [...notificationsFromExpenses, ...notificationsFromDebts, ...existingUnreadNotifications].sort((a, b) => {
         const dateA = new Date(a.dueDate || a.created_at);
         const dateB = new Date(b.dueDate || b.created_at);
         return dateA.getTime() - dateB.getTime(); // Ordenar por data mais próxima primeiro
@@ -1322,6 +1439,122 @@ app.post('/api/notifications/mark-as-read', authenticateToken, async (req, res) 
   } catch (error) {
     console.error('Erro ao marcar notificações como lidas:', error);
     res.status(500).json({ message: 'Erro interno do servidor ao marcar notificações como lidas.' });
+  }
+});
+
+// Rotas para Dívidas (CRUD)
+
+// Adicionar nova dívida
+app.post('/api/debts', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { description, amount, due_date, recurrence_type, recurrence_interval, recurrence_unit, installments, comments, tags } = req.body; // Adicionado comments e tags
+
+  try {
+    const [result] = await pool.execute(
+      'INSERT INTO debts (user_id, description, amount, due_date, recurrence_type, recurrence_interval, recurrence_unit, installments, comments, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', // Adicionado comments e tags
+      [userId, description, amount, due_date, recurrence_type || 'none', recurrence_interval, recurrence_unit, installments, comments || null, tags || null]
+    );
+    res.status(201).json({ id: result.insertId, user_id: userId, description, amount, due_date, recurrence_type, recurrence_interval, recurrence_unit, installments, status: 'pending', comments, tags }); // Retorna todos os campos
+  } catch (error) {
+    console.error('Erro ao adicionar dívida:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Obter todas as dívidas para o usuário autenticado
+app.get('/api/debts', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { month, year, week } = req.query; // NOVO: Parâmetros de filtro
+  
+  let query = 'SELECT id, description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags FROM debts WHERE user_id = ?';
+  const queryParams = [userId];
+
+  if (year) {
+    query += ' AND YEAR(due_date) = ?';
+    queryParams.push(parseInt(year as string));
+  }
+  if (month) {
+    query += ' AND MONTH(due_date) = ?';
+    queryParams.push(parseInt(month as string));
+  }
+  // A filtragem por semana é um pouco mais complexa em SQL e pode variar por DB.
+  // Para MySQL, WEEK() ou WEEKOFYEAR() podem ser usados.
+  // Para simplificar, vamos usar um filtro básico, ou considerar implementar no frontend se a precisão não for crítica no backend.
+  if (week && year) { // Week faz mais sentido com o ano
+    query += ' AND WEEK(due_date, 1) = ? AND YEAR(due_date) = ?'; // WEEK(date, 1) para semana começando no domingo
+    queryParams.push(parseInt(week as string));
+    queryParams.push(parseInt(year as string));
+  }
+
+  query += ' ORDER BY due_date ASC';
+
+  try {
+    const [rows] = await pool.execute(
+      query,
+      queryParams
+    );
+    res.json(rows);
+  } catch (error) {
+    console.error('Erro ao buscar dívidas:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Obter uma dívida específica
+app.get('/api/debts/:id', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { id } = req.params;
+  try {
+    const [rows] = await pool.execute(
+      'SELECT id, description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags FROM debts WHERE id = ? AND user_id = ?', // Adicionado comments e tags
+      [id, userId]
+    );
+    const debt = rows[0];
+    if (!debt) {
+      return res.status(404).json({ message: 'Dívida não encontrada ou você não tem permissão para visualizá-la.' });
+    }
+    res.json(debt);
+  } catch (error) {
+    console.error('Erro ao buscar dívida:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Atualizar dívida
+app.put('/api/debts/:id', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { id } = req.params;
+  const { description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags } = req.body; // Adicionado comments e tags
+
+  try {
+    const [result] = await pool.execute(
+      'UPDATE debts SET description = ?, amount = ?, due_date = ?, status = ?, recurrence_type = ?, recurrence_interval = ?, recurrence_unit = ?, installments = ?, paid_installments = ?, comments = ?, tags = ? WHERE id = ? AND user_id = ?', // Adicionado comments e tags
+      [description, amount, due_date, status || 'pending', recurrence_type || 'none', recurrence_interval, recurrence_unit, installments, paid_installments, comments || null, tags || null, id, userId]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Dívida não encontrada ou você não tem permissão para editá-la.' });
+    }
+    const [updatedRows] = await pool.execute('SELECT id, description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags FROM debts WHERE id = ?', [id]);
+    res.json(updatedRows[0]);
+  } catch (error) {
+    console.error('Erro ao atualizar dívida:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
+  }
+});
+
+// Deletar dívida
+app.delete('/api/debts/:id', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { id } = req.params;
+  try {
+    const [result] = await pool.execute('DELETE FROM debts WHERE id = ? AND user_id = ?', [id, userId]);
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ message: 'Dívida não encontrada ou você não tem permissão para deletá-la.' });
+    }
+    res.json({ message: 'Dívida deletada com sucesso.' });
+  } catch (error) {
+    console.error('Erro ao deletar dívida:', error);
+    res.status(500).json({ message: 'Erro interno do servidor.' });
   }
 });
 

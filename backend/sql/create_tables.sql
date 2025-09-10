@@ -68,3 +68,22 @@ CREATE TABLE IF NOT EXISTS notifications (
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS debts (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL,
+  description VARCHAR(255) NOT NULL,
+  amount DECIMAL(10, 2) NOT NULL,
+  due_date DATE NOT NULL,
+  status VARCHAR(50) DEFAULT 'pending', -- pending, paid, overdue
+  recurrence_type VARCHAR(50) DEFAULT 'none', -- none, monthly, custom, installments
+  recurrence_interval INT DEFAULT NULL, -- e.g., 1 for every month, 2 for every two months
+  recurrence_unit VARCHAR(50) DEFAULT NULL, -- day, week, month, year
+  installments INT DEFAULT NULL, -- Total number of installments
+  paid_installments INT DEFAULT 0, -- Number of installments already paid
+  comments TEXT DEFAULT NULL, -- NOVO: Campo para comentários sobre a dívida
+  tags VARCHAR(255) DEFAULT NULL, -- NOVO: Campo para tags/etiquetas (JSON string ou CSV, vamos começar com CSV simples)
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);

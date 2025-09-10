@@ -1,6 +1,6 @@
 export interface Notification {
   id: string;
-  type: 'conta' | 'prazo' | 'sistema'; // Adicionado 'sistema' como um tipo possível
+  type: 'conta' | 'prazo' | 'sistema' | 'divida'; // Adicionado 'divida' como um tipo possível
   message: string;
   dueDate?: string; // Opcional para contas a vencer
   is_read: boolean; // Alterado para is_read para consistência com o backend

@@ -86,9 +86,6 @@ export function NotificationBell() {
                       className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                     >
                       <p className="font-medium">{notification.message}</p>
-                      {notification.dueDate && (
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Vence em: {notification.dueDate}</p>
-                      )}
                     </a>
                   ))
                 )}

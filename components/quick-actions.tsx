@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Plus, TrendingUp, TrendingDown, PieChart } from "lucide-react"
 import { AddTransactionModal } from "@/components/add-transaction-modal"
+import { AddDebtModal } from "@/components/add-debt-modal";
 
 interface QuickActionsProps {
   onTransactionSaved: () => void;
@@ -13,6 +14,7 @@ interface QuickActionsProps {
 export function QuickActions({ onTransactionSaved }: QuickActionsProps) {
   const [showAddTransaction, setShowAddTransaction] = useState(false)
   const [transactionType, setTransactionType] = useState<"income" | "expense">("expense")
+  const [showAddDebt, setShowAddDebt] = useState(false); // NOVO: Estado para controlar o modal de dívidas
 
   const handleAddIncome = () => {
     setTransactionType("income")
@@ -23,6 +25,11 @@ export function QuickActions({ onTransactionSaved }: QuickActionsProps) {
     setTransactionType("expense")
     setShowAddTransaction(true)
   }
+
+  // NOVO: Handler para abrir o modal de adicionar dívida
+  const handleAddDebt = () => {
+    setShowAddDebt(true);
+  };
 
   return (
     <>
@@ -44,6 +51,16 @@ export function QuickActions({ onTransactionSaved }: QuickActionsProps) {
             >
               <TrendingUp className="h-6 w-6" />
               <span>Adicionar Receita</span>
+            </Button>
+
+            {/* NOVO: Botão para adicionar dívida */}
+            <Button
+              onClick={handleAddDebt}
+              variant="outline"
+              className="h-20 flex-col space-y-2 bg-blue-600 hover:bg-blue-700 text-white"
+            >
+              <Plus className="h-6 w-6" />
+              <span>Adicionar Dívida</span>
             </Button>
 
             <Button
@@ -72,6 +89,13 @@ export function QuickActions({ onTransactionSaved }: QuickActionsProps) {
         onClose={() => setShowAddTransaction(false)}
         defaultType={transactionType}
         onTransactionSaved={onTransactionSaved} // Passa o callback
+      />
+
+      {/* NOVO: AddDebtModal */}
+      <AddDebtModal
+        isOpen={showAddDebt}
+        onClose={() => setShowAddDebt(false)}
+        onDebtSaved={onTransactionSaved} // Reutiliza o callback para atualizar dados no dashboard
       />
     </>
   )
