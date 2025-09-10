@@ -12,6 +12,9 @@ jspm_packages/
 pnpm-lock.yaml
 .pnp/
 .pnp.js
+yarn.lock
+package-lock.json
+npm-shrinkwrap.json
 
 # TypeScript cache
 *.tsbuildinfo
@@ -50,6 +53,14 @@ Thumbs.db
 # Compiled output
 dist/
 build/
+
+# Test coverage
+coverage/
+.nyc_output/
+lcov.info
+
+# Linter cache
+.eslintcache
 
 # Miscellaneous
 .history/
