@@ -1,7 +1,7 @@
 'use client';
 
 import { Button } from '@/components/ui/button';
-import { Pencil, Trash2 } from 'lucide-react';
+import { Pencil, Trash2, CheckCircle } from 'lucide-react'; // Importar CheckCircle
 import { useState } from 'react';
 import { EditDebtModal } from './edit-debt-modal'; // Será criado no próximo passo
 import { Badge } from './ui/badge'; // Importar Badge para tags
@@ -16,6 +16,7 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog"; // Importar AlertDialog
+import { useToast } from './ui/use-toast'; // Importar useToast
 
 interface Debt {
   id: number;
@@ -43,6 +44,8 @@ export function DebtList({ debts, onDebtUpdated, onDebtDeleted }: DebtListProps)
   const [selectedDebt, setSelectedDebt] = useState<Debt | null>(null);
   const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false); // Novo estado para o modal de confirmação
   const [debtToDeleteId, setDebtToDeleteId] = useState<number | null>(null); // Novo estado para o ID da dívida a ser excluída
+
+  const { toast } = useToast(); // Inicializar useToast
 
   const handleEditClick = (debt: Debt) => {
     setSelectedDebt(debt);
@@ -76,13 +79,56 @@ export function DebtList({ debts, onDebtUpdated, onDebtDeleted }: DebtListProps)
       }
 
       onDebtDeleted(); // Atualiza a lista após a exclusão
-      alert('Dívida excluída com sucesso!');
+      toast({
+        title: "Sucesso!",
+        description: "Dívida excluída com sucesso!",
+      });
     } catch (error) {
       console.error('Erro ao excluir dívida:', error);
-      alert(`Erro ao excluir dívida: ${(error as Error).message}`);
+      toast({
+        title: "Erro",
+        description: `Erro ao excluir dívida: ${(error as Error).message}`,
+        variant: "destructive",
+      });
     } finally {
       setShowDeleteConfirmModal(false);
       setDebtToDeleteId(null);
+    }
+  };
+
+  const handleMarkAsPaid = async (debtId: number) => {
+    try {
+      const token = localStorage.getItem('token');
+      if (!token) {
+        throw new Error('Token de autenticação não encontrado.');
+      }
+
+      const response = await fetch(`/api/debts/${debtId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`,
+        },
+        body: JSON.stringify({ status: 'paid' }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.message || 'Falha ao marcar dívida como paga.');
+      }
+
+      onDebtUpdated(); // Atualiza a lista após a atualização
+      toast({
+        title: "Sucesso!",
+        description: "Dívida marcada como paga com sucesso!",
+      });
+    } catch (error) {
+      console.error('Erro ao marcar dívida como paga:', error);
+      toast({
+        title: "Erro",
+        description: `Erro ao marcar dívida como paga: ${(error as Error).message}`,
+        variant: "destructive",
+      });
     }
   };
 
@@ -110,6 +156,11 @@ export function DebtList({ debts, onDebtUpdated, onDebtDeleted }: DebtListProps)
             )}
           </div>
           <div className="flex space-x-2">
+            {debt.status !== 'paid' && ( // Mostrar botão "Paga" apenas se a dívida não estiver paga
+              <Button variant="outline" size="sm" onClick={() => handleMarkAsPaid(debt.id)}>
+                <CheckCircle className="h-4 w-4 mr-2" /> Paga
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => handleEditClick(debt)}>
               <Pencil className="h-4 w-4 mr-2" /> Editar
             </Button>

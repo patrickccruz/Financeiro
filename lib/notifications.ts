@@ -3,7 +3,7 @@ export interface Notification {
   type: 'conta' | 'prazo' | 'sistema' | 'divida'; // Adicionado 'divida' como um tipo possível
   message: string;
   dueDate?: string; // Opcional para contas a vencer
-  is_read: boolean; // Alterado para is_read para consistência com o backend
+  read: boolean; // Alterado de is_read para read
   created_at?: string; // Adicionado para notificações persistidas no DB
 }
 
@@ -33,7 +33,7 @@ export async function fetchNotifications(): Promise<Notification[]> {
     const data: Notification[] = await response.json();
     return data.map(notif => ({
       ...notif,
-      is_read: notif.is_read || false, // Garantir que is_read é boolean
+      read: notif.read || false, // Garantir que read é boolean
     }));
   } catch (error) {
     console.error("Erro em fetchNotifications:", error);

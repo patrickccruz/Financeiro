@@ -9,6 +9,7 @@ import { AddDebtModal } from '@/components/add-debt-modal';
 import { DebtList } from '@/components/debt-list';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'; // Importar Select
 import { Input } from '@/components/ui/input'; // Importar Input
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"; // Importar componentes Tabs
 
 export default function DebtsPage() {
   const [showAddDebtModal, setShowAddDebtModal] = useState(false);
@@ -18,6 +19,7 @@ export default function DebtsPage() {
   const [filterMonth, setFilterMonth] = useState<string>(''); // NOVO: Estado para filtro por mês
   const [filterYear, setFilterYear] = useState<string>(new Date().getFullYear().toString()); // NOVO: Estado para filtro por ano (ano atual como padrão)
   const [filterWeek, setFilterWeek] = useState<string>(''); // NOVO: Estado para filtro por semana
+  const [activeTab, setActiveTab] = useState('pending'); // NOVO: Estado para controlar a aba ativa
 
   const fetchDebts = async () => {
     setIsLoading(true);
@@ -147,10 +149,47 @@ export default function DebtsPage() {
             <p>Carregando dívidas...</p>
           ) : error ? (
             <p className="text-red-500">{error}</p>
-          ) : debts.length === 0 ? (
-            <p>Nenhuma dívida cadastrada. Adicione uma nova dívida para começar.</p>
           ) : (
-            <DebtList debts={debts} onDebtUpdated={fetchDebts} onDebtDeleted={fetchDebts} />
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-3">
+                <TabsTrigger value="pending">Pendentes</TabsTrigger>
+                <TabsTrigger value="paid">Pagas</TabsTrigger>
+                <TabsTrigger value="overdue">Atrasadas</TabsTrigger>
+              </TabsList>
+              <TabsContent value="pending">
+                {debts.filter(debt => debt.status === 'pending').length === 0 ? (
+                  <p>Nenhuma dívida pendente encontrada.</p>
+                ) : (
+                  <DebtList
+                    debts={debts.filter(debt => debt.status === 'pending')}
+                    onDebtUpdated={fetchDebts}
+                    onDebtDeleted={fetchDebts}
+                  />
+                )}
+              </TabsContent>
+              <TabsContent value="paid">
+                {debts.filter(debt => debt.status === 'paid').length === 0 ? (
+                  <p>Nenhuma dívida paga encontrada.</p>
+                ) : (
+                  <DebtList
+                    debts={debts.filter(debt => debt.status === 'paid')}
+                    onDebtUpdated={fetchDebts}
+                    onDebtDeleted={fetchDebts}
+                  />
+                )}
+              </TabsContent>
+              <TabsContent value="overdue">
+                {debts.filter(debt => debt.status === 'overdue').length === 0 ? (
+                  <p>Nenhuma dívida atrasada encontrada.</p>
+                ) : (
+                  <DebtList
+                    debts={debts.filter(debt => debt.status === 'overdue')}
+                    onDebtUpdated={fetchDebts}
+                    onDebtDeleted={fetchDebts}
+                  />
+                )}
+              </TabsContent>
+            </Tabs>
           )}
         </CardContent>
       </Card>

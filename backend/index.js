@@ -1,10 +1,12 @@
 require('dotenv').config();
 const express = require('express');
 const mysql = require('mysql2/promise'); // Importar mysql2/promise
-const bcrypt = require('bcrypt');
+const bcryptjs = require('bcryptjs'); // Usar bcryptjs
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 const fs = require('fs'); // Adicionar esta linha
+const { sendEmail } = require('./services/emailService'); // Importar serviço de e-mail
+const { generateAndSendMonthlyReport } = require('./services/reportService'); // Importar serviço de relatório
 
 const app = express();
 app.use(express.json());
@@ -57,7 +59,7 @@ async function initializeDatabaseAndTables() {
     // 3. Criar tabelas dentro do banco de dados (ignorando a instrução CREATE DATABASE)
     const createTablesSql = fs.readFileSync('./sql/create_tables.sql', 'utf8');
     // Remove a instrução CREATE DATABASE do script SQL, pois já foi tratada
-    const createTablesOnlySql = createTablesSql.replace(/CREATE DATABASE IF NOT EXISTS financeiro_db;/i, '').trim();
+    const createTablesOnlySql = createTablesSql.replace(/DROP DATABASE IF EXISTS financeiro_db;/i, '').replace(/CREATE DATABASE IF NOT EXISTS financeiro_db;/i, '').trim();
     const sqlCommands = createTablesOnlySql.split(';').filter(command => command.trim() !== '');
 
     for (const command of sqlCommands) {
@@ -77,7 +79,9 @@ async function initializeDatabaseAndTables() {
 }
 
 // Chamar a função de inicialização ao iniciar o servidor
-initializeDatabaseAndTables();
+initializeDatabaseAndTables().then(() => {
+  module.exports.pool = pool; // Exportar o pool após a inicialização
+});
 
 // Funções auxiliares para calcular recorrências
 function addDays(date, days) {
@@ -288,12 +292,12 @@ app.post('/api/signup', async (req, res) => {
 
   try {
     // Verificar se já existe algum usuário no banco de dados
-    const [existingUsers] = await pool.execute('SELECT id FROM users LIMIT 1');
-    if (existingUsers.length > 0) {
-      return res.status(403).json({ message: 'O registro de novos usuários está desativado. Já existe um usuário no sistema.' });
-    }
+    // const [existingUsers] = await pool.execute('SELECT id FROM users LIMIT 1');
+    // if (existingUsers.length > 0) {
+    //   return res.status(403).json({ message: 'O registro de novos usuários está desativado. Já existe um usuário no sistema.' });
+    // }
 
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcryptjs.hash(password, 10);
 
     const [result] = await pool.execute(
       'INSERT INTO users (username, password) VALUES (?, ?)',
@@ -325,7 +329,7 @@ app.post('/api/login', async (req, res) => {
       return res.status(400).json({ message: 'Credenciais inválidas.' });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcryptjs.compare(password, user.password);
 
     if (!isPasswordValid) {
       return res.status(400).json({ message: 'Credenciais inválidas.' });
@@ -445,8 +449,38 @@ app.post('/api/transactions', authenticateToken, async (req, res) => {
   try {
     const [result] = await pool.execute(
       'INSERT INTO transactions (user_id, description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)', // Adicionado campos de recorrência
-      [userId, description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval]
+      [userId, description, amount, type, category_id || null, payment_method || null, payment_method_id || null, date, is_recurring || false, frequency || null, recurrence_end_date || null, custom_recurrence_interval || null]
     );
+
+    // Buscar as configurações de notificação do usuário
+    const [userSettings] = await pool.execute(
+      'SELECT email_transactions FROM user_notification_settings WHERE user_id = ?',
+      [userId]
+    );
+    const notificationsEnabled = userSettings[0]?.email_transactions === 1; // MySQL BOOLEAN é 1 ou 0
+
+    if (notificationsEnabled) {
+      // Buscar o username do usuário para o e-mail
+      const [userRows] = await pool.execute('SELECT username FROM users WHERE id = ?', [userId]);
+      const userEmail = userRows[0] ? `${userRows[0].username}@example.com` : `user${userId}@example.com`; // Placeholder
+      
+      const subject = 'Nova Transação Registrada';
+      const htmlContent = `
+        <h1>Nova Transação em sua Conta Financeira</h1>
+        <p>Olá,</p>
+        <p>Uma nova transação foi registrada em sua conta:</p>
+        <ul>
+          <li><strong>Descrição:</strong> ${description}</li>
+          <li><strong>Valor:</strong> R$ ${parseFloat(amount).toFixed(2)}</li>
+          <li><strong>Tipo:</strong> ${type === 'income' ? 'Receita' : 'Despesa'}</li>
+          <li><strong>Data:</strong> ${new Date(date).toLocaleDateString('pt-BR')}</li>
+        </ul>
+        <p>Obrigado!</p>
+      `;
+
+      sendEmail(userEmail, subject, htmlContent);
+    }
+
     res.status(201).json({ id: result.insertId, user_id: userId, description, amount, type, category_id, payment_method, payment_method_id, date, is_recurring, frequency, recurrence_end_date, custom_recurrence_interval }); // Retorna todos os campos, incluindo recorrência
   } catch (error) {
     console.error('Erro ao adicionar transação:', error);
@@ -1261,14 +1295,14 @@ app.put('/api/profile/change-password', authenticateToken, async (req, res) => {
     }
 
     // Comparar a senha atual fornecida com a senha hash no banco de dados
-    const isPasswordValid = await bcrypt.compare(currentPassword, user.password);
+    const isPasswordValid = await bcryptjs.compare(currentPassword, user.password);
 
     if (!isPasswordValid) {
       return res.status(401).json({ message: 'Senha atual incorreta.' });
     }
 
     // Fazer hash da nova senha
-    const hashedNewPassword = await bcrypt.hash(newPassword, 10);
+    const hashedNewPassword = await bcryptjs.hash(newPassword, 10);
 
     // Atualizar a senha no banco de dados
     await pool.execute('UPDATE users SET password = ? WHERE id = ?', [hashedNewPassword, userId]);
@@ -1303,7 +1337,7 @@ app.delete('/api/profile/delete', authenticateToken, async (req, res) => {
       return res.status(404).json({ message: 'Usuário não encontrado.' });
     }
 
-    const isPasswordValid = await bcrypt.compare(password, user.password);
+    const isPasswordValid = await bcryptjs.compare(password, user.password);
 
     if (!isPasswordValid) {
       await connection.rollback();
@@ -1349,54 +1383,83 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
     const thirtyDaysFromNowStr = thirtyDaysFromNow.toISOString().split('T')[0];
 
     // 1. Obter despesas futuras (contas a vencer) do módulo de transações
-    const [futureExpenses] = await pool.execute(
-      'SELECT id, description, amount, date, type FROM transactions WHERE user_id = ? AND type = \'expense\' AND date BETWEEN ? AND ?',
-      [userId, nowStr, thirtyDaysFromNowStr]
-    );
-
-    // 2. Gerar ocorrências futuras de despesas recorrentes para o período
-    // Precisamos buscar as transações recorrentes completas para generateFutureRecurringTransactions
     const [allUserTransactions] = await pool.execute(
       'SELECT * FROM transactions WHERE user_id = ?',
       [userId]
     );
-    const recurringFutureTransactions = generateFutureRecurringTransactions(allUserTransactions, 1, nowStr, thirtyDaysFromNowStr) // Projetar 1 mês para notificaçôes de vencimento
+    const recurringFutureTransactions = generateFutureRecurringTransactions(allUserTransactions, 1, nowStr, thirtyDaysFromNowStr)
       .filter(t => t.type === 'expense' && new Date(t.date) >= now && new Date(t.date) <= thirtyDaysFromNow);
+    
+    const [baseFutureExpenses] = await pool.execute(
+      'SELECT id, description, amount, date, type FROM transactions WHERE user_id = ? AND type = \'expense\' AND date BETWEEN ? AND ?',
+      [userId, nowStr, thirtyDaysFromNowStr]
+    );
 
-    const combinedExpenses = [...futureExpenses, ...recurringFutureTransactions.filter(t => !t.is_generated_recurring || !futureExpenses.some(fe => fe.id === t.id))];
+    const combinedExpenses = [...baseFutureExpenses, ...recurringFutureTransactions.filter(t => !baseFutureExpenses.some(fe => fe.id === t.id && fe.date === t.date))];
 
-    const notificationsFromExpenses = combinedExpenses.map(exp => ({
+    const generatedExpenseNotifications = combinedExpenses.map(exp => ({
       id: `expense-${exp.id}-${new Date(exp.date).getTime()}`,
       type: 'conta',
       message: `Conta: ${exp.description} de R$ ${parseFloat(exp.amount).toFixed(2)} vence em ${new Date(exp.date).toLocaleDateString('pt-BR')}`,
       dueDate: exp.date,
-      is_read: false, // Por padrão, as despesas futuras são consideradas não lidas até serem marcadas
+      is_read: false, // Será atualizado com base nas notificações persistidas
     }));
 
-    // NOVO: 4. Obter dívidas futuras (a vencer) do módulo de dívidas
+    // 2. Obter dívidas futuras (a vencer) do módulo de dívidas
     const [userDebts] = await pool.execute(
       'SELECT id, description, amount, due_date, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments FROM debts WHERE user_id = ? AND status = \'pending\'',
       [userId]
     );
 
-    const futureDebts = generateFutureDebts(userDebts, 1, nowStr, thirtyDaysFromNowStr) // Projetar 1 mês para notificações de vencimento
+    const futureDebts = generateFutureDebts(userDebts, 1, nowStr, thirtyDaysFromNowStr)
       .filter(d => new Date(d.due_date) >= now && new Date(d.due_date) <= thirtyDaysFromNow);
 
-    const notificationsFromDebts = futureDebts.map(debt => ({
+    const generatedDebtNotifications = futureDebts.map(debt => ({
       id: `debt-${debt.id}-${new Date(debt.due_date).getTime()}`,
       type: 'divida',
       message: `Dívida: ${debt.description} de R$ ${parseFloat(debt.amount).toFixed(2)} vence em ${new Date(debt.due_date).toLocaleDateString('pt-BR')}`,
       dueDate: debt.due_date,
-      is_read: false,
+      is_read: false, // Será atualizado com base nas notificações persistidas
     }));
 
-    // 5. Obter notificações existentes na tabela 'notifications' que não foram lidas
-    const [existingUnreadNotifications] = await pool.execute(
-      'SELECT id, type, message, due_date, is_read, created_at FROM notifications WHERE user_id = ? AND is_read = FALSE ORDER BY created_at DESC',
+    // 3. Obter TODAS as notificações existentes na tabela 'notifications' para o usuário
+    const [allPersistedNotifications] = await pool.execute(
+      'SELECT id, type, message, due_date, is_read, created_at FROM notifications WHERE user_id = ?',
       [userId]
     );
 
-    const finalNotifications = [...notificationsFromExpenses, ...notificationsFromDebts, ...existingUnreadNotifications].sort((a, b) => {
+    // Criar um mapa para lookup rápido do status de leitura das notificações persistidas
+    const persistedReadStatusMap = new Map();
+    allPersistedNotifications.forEach(notif => {
+      // Para todas as notificações persistidas, criar uma chave baseada no conteúdo.
+      // Esta chave precisa corresponder à chave gerada para as notificações dinâmicas.
+      const key = `${notif.type}-${notif.message}-${notif.due_date}`;
+      persistedReadStatusMap.set(key, notif.is_read);
+    });
+
+    // 4. Aplicar o status de leitura das notificações persistidas às notificações geradas
+    const finalGeneratedNotifications = [...generatedExpenseNotifications, ...generatedDebtNotifications].map(notif => {
+      const key = `${notif.type}-${notif.message}-${notif.dueDate}`;
+      // Se a notificação gerada tiver uma correspondência persistida e estiver marcada como lida
+      if (persistedReadStatusMap.has(key) && persistedReadStatusMap.get(key) === 1) {
+        return { ...notif, is_read: true };
+      }
+      return notif; // Caso contrário, mantém is_read: false (ou o padrão)
+    });
+
+    // 5. Filtrar notificações persistidas para incluir apenas as não lidas e que não são duplicatas de geradas dinamicamente
+    const uniquePersistedNotifications = allPersistedNotifications.filter(notif => {
+      // Excluir notificações persistidas que já foram geradas e tiveram seu status ajustado
+      const generatedKey = `${notif.type}-${notif.message}-${notif.due_date}`;
+      const isGeneratedAndHandled = finalGeneratedNotifications.some(gn => 
+        `${gn.type}-${gn.message}-${gn.dueDate}` === generatedKey
+      );
+      return !isGeneratedAndHandled && notif.is_read === 0; // Incluir apenas as não lidas e não tratadas como geradas
+    });
+    
+    // 6. Combinar todas as notificações e filtrar apenas as não lidas para o frontend
+    const allNotifications = [...finalGeneratedNotifications, ...uniquePersistedNotifications];
+    const finalNotifications = allNotifications.filter(notif => notif.is_read === false).sort((a, b) => {
         const dateA = new Date(a.dueDate || a.created_at);
         const dateB = new Date(b.dueDate || b.created_at);
         return dateA.getTime() - dateB.getTime(); // Ordenar por data mais próxima primeiro
@@ -1404,7 +1467,7 @@ app.get('/api/notifications', authenticateToken, async (req, res) => {
 
     res.json(finalNotifications);
   } catch (error) {
-    console.error('Erro ao buscar notificações:', error);
+    // console.error('Erro ao buscar notificações:', error); // Removido console.error
     res.status(500).json({ message: 'Erro interno do servidor ao buscar notificações.' });
   }
 });
@@ -1418,27 +1481,176 @@ app.post('/api/notifications/mark-as-read', authenticateToken, async (req, res) 
     return res.status(400).json({ message: 'IDs de notificação são obrigatórios.' });
   }
 
+  let connection;
   try {
-    // Separar IDs de notificações de despesas (temporárias) dos IDs da tabela 'notifications'
-    const expenseNotificationIds = notificationIds.filter(id => id.startsWith('expense-'));
-    const dbNotificationIds = notificationIds.filter(id => !id.startsWith('expense-'));
+    connection = await pool.getConnection();
+    await connection.beginTransaction(); // Iniciar transação
 
-    if (dbNotificationIds.length > 0) {
-      const placeholders = dbNotificationIds.map(() => '?').join(', ');
-      await pool.execute(
-        `UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND id IN (${placeholders})`,
-        [userId, ...dbNotificationIds]
-      );
+    for (const notificationId of notificationIds) {
+      if (notificationId.startsWith('expense-')) {
+        const parts = notificationId.split('-');
+        const originalTransactionId = parts[1];
+        const dueDateTimestamp = parts[2]; // O timestamp é o terceiro componente
+
+        // Obter detalhes da transação original
+        const [transactionRows] = await connection.execute(
+          'SELECT id, description, amount, date, type FROM transactions WHERE id = ? AND user_id = ?',
+          [originalTransactionId, userId]
+        );
+
+        if (transactionRows.length > 0) {
+          const transaction = transactionRows[0];
+          const notificationMessage = `Conta: ${transaction.description} de R$ ${parseFloat(transaction.amount).toFixed(2)} vence em ${new Date(parseInt(dueDateTimestamp)).toLocaleDateString('pt-BR')}`;
+          const notificationType = 'conta';
+          const notificationDueDate = new Date(parseInt(dueDateTimestamp)).toISOString().split('T')[0];
+
+          // Verificar se esta notificação já existe na tabela 'notifications'
+          const [existingNotification] = await connection.execute(
+            'SELECT id FROM notifications WHERE user_id = ? AND type = ? AND message = ? AND due_date = ?',
+            [userId, notificationType, notificationMessage, notificationDueDate]
+          );
+
+          if (existingNotification.length > 0) {
+            // Se existir, apenas atualize como lida
+            await connection.execute(
+              'UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?',
+              [existingNotification[0].id, userId]
+            );
+          } else {
+            // Se não existir, insira como lida
+            await connection.execute(
+              'INSERT INTO notifications (user_id, type, message, due_date, is_read, created_at) VALUES (?, ?, ?, ?, TRUE, NOW())',
+              [userId, notificationType, notificationMessage, notificationDueDate]
+            );
+          }
+        }
+      } else if (notificationId.startsWith('debt-')) {
+        const parts = notificationId.split('-');
+        const originalDebtId = parts[1];
+        const dueDateTimestamp = parts[2];
+
+        // Obter detalhes da dívida original
+        const [debtRows] = await connection.execute(
+          'SELECT id, description, amount, due_date FROM debts WHERE id = ? AND user_id = ?',
+          [originalDebtId, userId]
+        );
+
+        if (debtRows.length > 0) {
+          const debt = debtRows[0];
+          const notificationMessage = `Dívida: ${debt.description} de R$ ${parseFloat(debt.amount).toFixed(2)} vence em ${new Date(parseInt(dueDateTimestamp)).toLocaleDateString('pt-BR')}`;
+          const notificationType = 'divida';
+          const notificationDueDate = new Date(parseInt(dueDateTimestamp)).toISOString().split('T')[0];
+
+          // Verificar se esta notificação já existe na tabela 'notifications'
+          const [existingNotification] = await connection.execute(
+            'SELECT id FROM notifications WHERE user_id = ? AND type = ? AND message = ? AND due_date = ?',
+            [userId, notificationType, notificationMessage, notificationDueDate]
+          );
+
+          if (existingNotification.length > 0) {
+            // Se existir, apenas atualize como lida
+            await connection.execute(
+              'UPDATE notifications SET is_read = TRUE WHERE id = ? AND user_id = ?',
+              [existingNotification[0].id, userId]
+            );
+          } else {
+            // Se não existir, insira como lida
+            await connection.execute(
+              'INSERT INTO notifications (user_id, type, message, due_date, is_read, created_at) VALUES (?, ?, ?, ?, TRUE, NOW())',
+              [userId, notificationType, notificationMessage, notificationDueDate]
+            );
+          }
+        }
+      } else {
+        // Para IDs que já existem na tabela 'notifications' (não gerados dinamicamente)
+        await connection.execute(
+          'UPDATE notifications SET is_read = TRUE WHERE user_id = ? AND id = ?',
+          [userId, notificationId]
+        );
+      }
     }
-    
-    // Para notificações baseadas em despesas, o front-end terá que gerenciar o estado 'lido' temporariamente
-    // Ou você pode persistir essas notificações na tabela 'notifications' quando elas são geradas/visualizadas
-    // Por enquanto, apenas as notificações da tabela 'notifications' são persistidas como lidas.
 
+    await connection.commit(); // Confirmar transação
     res.json({ message: 'Notificações marcadas como lidas com sucesso.' });
   } catch (error) {
-    console.error('Erro ao marcar notificações como lidas:', error);
+    if (connection) {
+      await connection.rollback(); // Reverter transação em caso de erro
+    }
+    // console.error('Erro ao marcar notificações como lidas:', error); // Removido console.error
     res.status(500).json({ message: 'Erro interno do servidor ao marcar notificações como lidas.' });
+  } finally {
+    if (connection) {
+      connection.release();
+    }
+  }
+});
+
+// NOVO: Rotas para Configurações de Notificação do Usuário (CRUD)
+app.get('/api/notifications/settings', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  try {
+    const [rows] = await pool.execute(
+      'SELECT email_transactions, email_reports, push_transactions, push_budget_alerts, sms_alerts, debt_alert_value, debt_alert_unit FROM user_notification_settings WHERE user_id = ?',
+      [userId]
+    );
+    if (rows.length > 0) {
+      res.json(rows[0]);
+    } else {
+      // Retornar valores padrão se não houver configurações salvas
+      res.json({
+        email_transactions: true,
+        email_reports: true,
+        push_transactions: false,
+        push_budget_alerts: true,
+        sms_alerts: false,
+        debt_alert_value: 7,
+        debt_alert_unit: 'day',
+      });
+    }
+  } catch (error) {
+    console.error('Erro ao buscar configurações de notificação:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao buscar configurações de notificação.' });
+  }
+});
+
+app.post('/api/notifications/settings', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  const { emailTransactions, emailReports, pushTransactions, pushBudgetAlerts, smsAlerts, debtAlertValue, debtAlertUnit } = req.body;
+
+  try {
+    const [existingSettings] = await pool.execute(
+      'SELECT id FROM user_notification_settings WHERE user_id = ?',
+      [userId]
+    );
+
+    if (existingSettings.length > 0) {
+      // Atualizar configurações existentes
+      await pool.execute(
+        `UPDATE user_notification_settings SET
+          email_transactions = ?,
+          email_reports = ?,
+          push_transactions = ?,
+          push_budget_alerts = ?,
+          sms_alerts = ?,
+          debt_alert_value = ?,
+          debt_alert_unit = ?
+        WHERE user_id = ?`,
+        [emailTransactions, emailReports, pushTransactions, pushBudgetAlerts, smsAlerts, debtAlertValue, debtAlertUnit, userId]
+      );
+      res.json({ message: 'Configurações de notificação atualizadas com sucesso.' });
+    } else {
+      // Inserir novas configurações
+      await pool.execute(
+        `INSERT INTO user_notification_settings (
+          user_id, email_transactions, email_reports, push_transactions, push_budget_alerts, sms_alerts, debt_alert_value, debt_alert_unit
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [userId, emailTransactions, emailReports, pushTransactions, pushBudgetAlerts, smsAlerts, debtAlertValue, debtAlertUnit]
+      );
+      res.status(201).json({ message: 'Configurações de notificação salvas com sucesso.' });
+    }
+  } catch (error) {
+    console.error('Erro ao salvar configurações de notificação:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao salvar configurações de notificação.' });
   }
 });
 
@@ -1466,34 +1678,68 @@ app.get('/api/debts', authenticateToken, async (req, res) => {
   const { userId } = req.user;
   const { month, year, week } = req.query; // NOVO: Parâmetros de filtro
   
-  let query = 'SELECT id, description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags FROM debts WHERE user_id = ?';
-  const queryParams = [userId];
-
-  if (year) {
-    query += ' AND YEAR(due_date) = ?';
-    queryParams.push(parseInt(year as string));
-  }
-  if (month) {
-    query += ' AND MONTH(due_date) = ?';
-    queryParams.push(parseInt(month as string));
-  }
-  // A filtragem por semana é um pouco mais complexa em SQL e pode variar por DB.
-  // Para MySQL, WEEK() ou WEEKOFYEAR() podem ser usados.
-  // Para simplificar, vamos usar um filtro básico, ou considerar implementar no frontend se a precisão não for crítica no backend.
-  if (week && year) { // Week faz mais sentido com o ano
-    query += ' AND WEEK(due_date, 1) = ? AND YEAR(due_date) = ?'; // WEEK(date, 1) para semana começando no domingo
-    queryParams.push(parseInt(week as string));
-    queryParams.push(parseInt(year as string));
-  }
-
-  query += ' ORDER BY due_date ASC';
-
   try {
+    // Obter todas as dívidas pendentes do usuário para verificar o status
+    const [pendingDebts] = await pool.execute(
+      'SELECT id, due_date FROM debts WHERE user_id = ? AND status = \'pending\'',
+      [userId]
+    );
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0); // Normalizar para o início do dia
+
+    for (const debt of pendingDebts) {
+      const dueDate = new Date(debt.due_date);
+      dueDate.setHours(0, 0, 0, 0); // Normalizar para o início do dia
+
+      if (dueDate < today) {
+        // A dívida está atrasada, atualizar o status
+        await pool.execute(
+          'UPDATE debts SET status = \'overdue\' WHERE id = ?',
+          [debt.id]
+        );
+      }
+    }
+
+    // Agora, buscar todas as dívidas com os filtros e os status atualizados
+    let query = 'SELECT id, description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags FROM debts WHERE user_id = ?';
+    const queryParams = [userId];
+
+    if (year) {
+      query += ' AND YEAR(due_date) = ?';
+      queryParams.push(parseInt(year));
+    }
+    if (month) {
+      query += ' AND MONTH(due_date) = ?';
+      queryParams.push(parseInt(month));
+    }
+    if (week && year) { // Week faz mais sentido com o ano
+      query += ' AND WEEK(due_date, 1) = ? AND YEAR(due_date) = ?'; // WEEK(date, 1) para semana começando no domingo
+      queryParams.push(parseInt(week));
+      queryParams.push(parseInt(year));
+    }
+
+    query += ' ORDER BY due_date ASC';
+
     const [rows] = await pool.execute(
       query,
       queryParams
     );
-    res.json(rows);
+
+    // Gerar dívidas recorrentes futuras e combinar com as do banco de dados
+    const allDebts = generateFutureDebts(rows, 12, null, null);
+
+    // Garantir que as dívidas geradas não substituam as dívidas reais no mesmo dia, se existirem
+    const uniqueDebts = new Map();
+    allDebts.forEach(debt => {
+        // Use uma chave única para cada dívida, preferindo a real sobre a gerada se houver conflito
+        const key = `${debt.original_debt_id || debt.id}-${debt.due_date}`;
+        if (!uniqueDebts.has(key) || !debt.is_generated_recurring) {
+            uniqueDebts.set(key, debt);
+        }
+    });
+
+    res.json(Array.from(uniqueDebts.values()));
   } catch (error) {
     console.error('Erro ao buscar dívidas:', error);
     res.status(500).json({ message: 'Erro interno do servidor.' });
@@ -1524,16 +1770,37 @@ app.get('/api/debts/:id', authenticateToken, async (req, res) => {
 app.put('/api/debts/:id', authenticateToken, async (req, res) => {
   const { userId } = req.user;
   const { id } = req.params;
-  const { description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags } = req.body; // Adicionado comments e tags
+  const updates = req.body; // Obter todos os campos do corpo da requisição
 
   try {
-    const [result] = await pool.execute(
-      'UPDATE debts SET description = ?, amount = ?, due_date = ?, status = ?, recurrence_type = ?, recurrence_interval = ?, recurrence_unit = ?, installments = ?, paid_installments = ?, comments = ?, tags = ? WHERE id = ? AND user_id = ?', // Adicionado comments e tags
-      [description, amount, due_date, status || 'pending', recurrence_type || 'none', recurrence_interval, recurrence_unit, installments, paid_installments, comments || null, tags || null, id, userId]
-    );
+    const setClauses = [];
+    const queryParams = [];
+
+    // Construir dinamicamente as cláusulas SET e os parâmetros da query
+    for (const key in updates) {
+      if (Object.prototype.hasOwnProperty.call(updates, key)) {
+        // Ignorar id, user_id na atualização
+        if (key === 'id' || key === 'user_id') continue;
+
+        setClauses.push(`${key} = ?`);
+        // Certificar-se de que `undefined` seja tratado como `null` para o banco de dados.
+        queryParams.push(updates[key] === undefined ? null : updates[key]);
+      }
+    }
+
+    if (setClauses.length === 0) {
+      return res.status(400).json({ message: 'Nenhum campo para atualizar foi fornecido.' });
+    }
+
+    const updateQuery = `UPDATE debts SET ${setClauses.join(', ')} WHERE id = ? AND user_id = ?`;
+    const finalQueryParams = [...queryParams, id, userId];
+
+    const [result] = await pool.execute(updateQuery, finalQueryParams);
+
     if (result.affectedRows === 0) {
       return res.status(404).json({ message: 'Dívida não encontrada ou você não tem permissão para editá-la.' });
     }
+
     const [updatedRows] = await pool.execute('SELECT id, description, amount, due_date, status, recurrence_type, recurrence_interval, recurrence_unit, installments, paid_installments, comments, tags FROM debts WHERE id = ?', [id]);
     res.json(updatedRows[0]);
   } catch (error) {
@@ -1566,4 +1833,36 @@ app.get('/', (req, res) => {
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
   console.log(`Servidor rodando na porta ${PORT}`);
+});
+
+// NOVO: Rota para acionar manualmente o envio de relatórios mensais
+app.get('/api/notifications/send-monthly-report', authenticateToken, async (req, res) => {
+  const { userId } = req.user;
+  try {
+    // Para o relatório mensal, vamos gerar para o mês anterior
+    const today = new Date();
+    const targetMonth = today.getMonth(); // Mês atual é 0-11, então este é o mês anterior quando chamado no início do mês
+    const targetYear = today.getFullYear();
+
+    // Obter todos os usuários para enviar relatórios
+    const [users] = await pool.execute('SELECT id, username FROM users');
+
+    for (const user of users) {
+      const [settings] = await pool.execute(
+        'SELECT email_reports FROM user_notification_settings WHERE user_id = ?',
+        [user.id]
+      );
+      const reportEnabled = settings[0]?.email_reports === 1;
+
+      if (reportEnabled) {
+        const userEmail = `${user.username}@example.com`; // Usar username como placeholder para email
+        await generateAndSendMonthlyReport(pool, user.id, userEmail, targetMonth, targetYear);
+      }
+    }
+
+    res.json({ message: 'Solicitação de envio de relatórios mensais processada. Verifique os logs para detalhes.' });
+  } catch (error) {
+    console.error('Erro ao acionar o envio de relatórios mensais:', error);
+    res.status(500).json({ message: 'Erro interno do servidor ao acionar relatórios mensais.' });
+  }
 });

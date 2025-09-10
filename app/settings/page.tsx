@@ -57,23 +57,23 @@ export default function SettingsPage() {
             <TabsTrigger value="notifications">Notificações</TabsTrigger>
           </TabsList>
 
-          <TabsContent value="payment-methods">
+          <TabsContent value="payment-methods" className="p-6">
             <PaymentMethodsSettings />
           </TabsContent>
 
-          <TabsContent value="bank-accounts"> {/* Novo conteúdo da aba */}
+          <TabsContent value="bank-accounts" className="p-6"> {/* Novo conteúdo da aba */}
             <BankAccountSettings />
           </TabsContent>
 
-          <TabsContent value="profile">
+          <TabsContent value="profile" className="p-6">
             <ProfileSettings />
           </TabsContent>
 
-          <TabsContent value="categories">
+          <TabsContent value="categories" className="p-6">
             <CategorySettings />
           </TabsContent>
 
-          <TabsContent value="notifications">
+          <TabsContent value="notifications" className="p-6">
             <NotificationSettings />
           </TabsContent>
         </Tabs>

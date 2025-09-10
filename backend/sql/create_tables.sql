@@ -1,3 +1,5 @@
+DROP DATABASE IF EXISTS financeiro_db;
+
 CREATE DATABASE IF NOT EXISTS financeiro_db;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -85,5 +87,18 @@ CREATE TABLE IF NOT EXISTS debts (
   tags VARCHAR(255) DEFAULT NULL, -- NOVO: Campo para tags/etiquetas (JSON string ou CSV, vamos começar com CSV simples)
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS user_notification_settings (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  user_id INT NOT NULL UNIQUE,
+  email_transactions BOOLEAN DEFAULT TRUE,
+  email_reports BOOLEAN DEFAULT TRUE,
+  push_transactions BOOLEAN DEFAULT FALSE,
+  push_budget_alerts BOOLEAN DEFAULT TRUE,
+  sms_alerts BOOLEAN DEFAULT FALSE,
+  debt_alert_value INT DEFAULT 7,
+  debt_alert_unit VARCHAR(50) DEFAULT 'day',
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );

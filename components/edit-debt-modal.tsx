@@ -12,6 +12,18 @@ import { CalendarIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Textarea } from './ui/textarea'; // Importar Textarea
+import { useToast } from './ui/use-toast'; // Importar useToast
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"; // Importar AlertDialog
 
 interface Debt {
   id: number;
@@ -48,6 +60,9 @@ export function EditDebtModal({ isOpen, onClose, onDebtUpdated, debt }: EditDebt
   const [comments, setComments] = useState(debt.comments || ''); // NOVO: Estado para comentários
   const [tags, setTags] = useState(debt.tags || '');       // NOVO: Estado para tags
   const [isLoading, setIsLoading] = useState(false);
+
+  const { toast } = useToast(); // Inicializar useToast
+  const [showDeleteConfirmModal, setShowDeleteConfirmModal] = useState(false); // Novo estado para o modal de confirmação
 
   useEffect(() => {
     if (debt) {
@@ -108,26 +123,39 @@ export function EditDebtModal({ isOpen, onClose, onDebtUpdated, debt }: EditDebt
         throw new Error(errorData.message || 'Falha ao atualizar dívida.');
       }
 
-      alert('Dívida atualizada com sucesso!');
+      // Substituir alert por toast
+      toast({
+        title: "Sucesso!",
+        description: "Dívida atualizada com sucesso!",
+      });
+
       onClose();
       onDebtUpdated();
     } catch (error) {
       console.error('Erro ao atualizar dívida:', error);
-      alert(`Erro ao atualizar dívida: ${(error as Error).message}`);
+      toast({
+        title: "Erro",
+        description: `Erro ao atualizar dívida: ${(error as Error).message}`,
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleDelete = async () => {
-    if (!confirm('Tem certeza que deseja excluir esta dívida? Esta ação é irreversível.')) {
-      return;
-    }
+    setShowDeleteConfirmModal(true); // Abre o modal de confirmação
+  };
 
+  const confirmDelete = async () => {
     setIsLoading(true);
     const token = localStorage.getItem('token');
     if (!token) {
-      alert('Token de autenticação não encontrado. Por favor, faça login novamente.');
+      toast({
+        title: "Erro",
+        description: "Token de autenticação não encontrado. Por favor, faça login novamente.",
+        variant: "destructive",
+      });
       setIsLoading(false);
       return;
     }
@@ -145,14 +173,22 @@ export function EditDebtModal({ isOpen, onClose, onDebtUpdated, debt }: EditDebt
         throw new Error(errorData.message || 'Falha ao excluir dívida.');
       }
 
-      alert('Dívida excluída com sucesso!');
+      toast({
+        title: "Sucesso!",
+        description: "Dívida excluída com sucesso!",
+      });
       onClose();
       onDebtUpdated(); // Recarrega a lista após a exclusão
     } catch (error) {
       console.error('Erro ao excluir dívida:', error);
-      alert(`Erro ao excluir dívida: ${(error as Error).message}`);
+      toast({
+        title: "Erro",
+        description: `Erro ao excluir dívida: ${(error as Error).message}`,
+        variant: "destructive",
+      });
     } finally {
       setIsLoading(false);
+      setShowDeleteConfirmModal(false);
     }
   };
 
@@ -329,9 +365,25 @@ export function EditDebtModal({ isOpen, onClose, onDebtUpdated, debt }: EditDebt
           </div>
         </div>
         <DialogFooter className="flex justify-between">
-          <Button variant="destructive" onClick={handleDelete} disabled={isLoading}>
-            Excluir Dívida {isLoading && '...'}
-          </Button>
+          <AlertDialog open={showDeleteConfirmModal} onOpenChange={setShowDeleteConfirmModal}>
+            <AlertDialogTrigger asChild>
+              <Button variant="destructive" disabled={isLoading}>
+                Excluir Dívida {isLoading && '...'}
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Tem certeza que deseja excluir esta dívida?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Esta ação é irreversível.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel onClick={() => setShowDeleteConfirmModal(false)}>Cancelar</AlertDialogCancel>
+                <AlertDialogAction onClick={confirmDelete}>Excluir</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
           <Button type="submit" onClick={handleSubmit} disabled={isLoading}>Salvar Alterações {isLoading && '...'}</Button>
         </DialogFooter>
       </DialogContent>

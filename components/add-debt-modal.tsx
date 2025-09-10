@@ -12,6 +12,7 @@ import { CalendarIcon } from 'lucide-react';
 import { format } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { Textarea } from './ui/textarea'; // Importar Textarea
+import { useToast } from './ui/use-toast'; // Importar useToast
 
 interface AddDebtModalProps {
   isOpen: boolean;
@@ -30,6 +31,8 @@ export function AddDebtModal({ isOpen, onClose, onDebtSaved }: AddDebtModalProps
   const [comments, setComments] = useState(''); // NOVO: Estado para comentários
   const [tags, setTags] = useState(''); // NOVO: Estado para tags
   const [isLoading, setIsLoading] = useState(false);
+
+  const { toast } = useToast(); // Inicializar useToast
 
   const handleSubmit = async () => {
     if (!description || !amount || !dueDate) {
@@ -72,7 +75,12 @@ export function AddDebtModal({ isOpen, onClose, onDebtSaved }: AddDebtModalProps
         throw new Error(errorData.message || 'Falha ao adicionar dívida.');
       }
 
-      alert('Dívida adicionada com sucesso!');
+      // Substituir alert por toast
+      toast({
+        title: "Sucesso!",
+        description: "Dívida adicionada com sucesso!",
+      });
+
       onClose();
       onDebtSaved();
       // Resetar estado do formulário

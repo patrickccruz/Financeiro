@@ -28,11 +28,12 @@ export function NotificationBell() {
 
   const handleMarkAllAsRead = async () => {
     const unreadIds = notifications.filter((n) => !n.read).map((n) => n.id);
+
     if (unreadIds.length > 0) {
       try {
         await markNotificationsAsRead(unreadIds);
-        // Atualiza o estado local para refletir as notificações lidas
-        setNotifications(notifications.map((n) => ({ ...n, read: true })));
+        // Atualiza o estado local para refletir as notificações lidas e depois re-busca do backend para garantir consistência
+        await getNotifications();
       } catch (err) {
         console.error("Erro ao marcar notificações como lidas:", err);
         // Opcional: mostrar uma mensagem de erro para o usuário
@@ -79,9 +80,9 @@ export function NotificationBell() {
                 {unreadNotifications.length === 0 ? (
                   <p className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300">Nenhuma notificação nova.</p>
                 ) : (
-                  unreadNotifications.map((notification) => (
+                  unreadNotifications.map((notification, index) => (
                     <a
-                      key={notification.id}
+                      key={`${notification.id}-${index}`}
                       href="#"
                       className="block px-4 py-2 text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700"
                     >
